@@ -709,6 +709,7 @@ def main():
         elif o.cmd == "setup-manager":
             cmd_setup_manager()
         elif o.cmd == "update":
+            subprocess.run(["git", "-C", str(ROOT), "config", "core.fileMode", "false"])   # a chmod must never block an update
             sys.exit(subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"]).returncode)
         else:
             p.print_help()

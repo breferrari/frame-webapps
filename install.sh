@@ -24,11 +24,13 @@ if [ -n "${FRAME_WEBAPPS_SRC:-}" ]; then
   mkdir -p "$DEST"
   (cd "$FRAME_WEBAPPS_SRC" && git ls-files -co --exclude-standard -z | tar --null -T - -cf -) | tar -xf - -C "$DEST"
 elif [ -d "$DEST/.git" ]; then
+  git -C "$DEST" config core.fileMode false   # a chmod must never block an update
   git -C "$DEST" pull --ff-only
 elif [ -e "$DEST" ] && [ -n "$(ls -A "$DEST" 2>/dev/null)" ]; then
   echo "$DEST exists and isn't a git checkout. Move it away or set FRAME_WEBAPPS_HOME."; exit 1
 else
   git clone --depth 1 "$REPO" "$DEST"
+  git -C "$DEST" config core.fileMode false
 fi
 chmod +x "$DEST/bin/frame-webapp" "$DEST"/scripts/*.sh "$DEST"/scripts/*.py "$DEST"/webapps/*.sh "$DEST/manager/Web Apps"
 
