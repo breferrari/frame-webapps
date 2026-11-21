@@ -40,6 +40,8 @@ No password, nothing system-wide, nothing restarts. See [what it changes](#what-
 After installing, **Web Apps** is in your Steam library (and in the desktop menu). Open it in the headset and use the
 controller:
 
+![The Web Apps manager in the headset: your apps with Remove buttons, and a grid of known sites with one of them highlighted](docs/manager.png)
+
 - **Add a site** from the grid of known sites with one press, or type just an address under **Another site**
   (the name is taken from the site).
 - **Remove** an app with two presses. It leaves the Steam library at once. If the app is open, it is closed first.
