@@ -20,7 +20,7 @@ One command, or one press in the **Web Apps** manager, puts the site in your Ste
 🧹 **It's easy to undo.** No password, nothing system-wide, and one command removes an app.  
 
 Made for streaming sites, but you can add any site. Built and tested on a Steam Frame running SteamOS 0.5.10,
-SteamVR 2.19.4 and Flathub Chromium 158 (November 2026). Tried in the headset so far: Crunchyroll and Twitch.
+SteamVR 2.19.4 and Flathub Chromium 158 (November 2026). Tried in the headset so far: Crunchyroll, Twitch, Kick and Xbox Cloud Gaming.
 If a site misbehaves, please open an issue with its address.
 
 ## Install
@@ -86,6 +86,8 @@ The artwork is generated from the site's own icon and colour. To change it:
 **Game streaming sites** (Xbox Cloud Gaming, GeForce NOW and the like) read the controller themselves. Add them with
 `--controller native`, or from the manager's grid, where they are marked "Game streaming". They then get the
 controller directly, and the navigation above is off for that app.
+
+![A game streamed through Xbox Cloud Gaming on the theater screen, with the Frame controllers below it](docs/game-streaming.png)
 
 ## Limits
 
