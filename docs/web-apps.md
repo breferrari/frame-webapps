@@ -67,7 +67,7 @@ and the pointing stick scrolls (laser scroll arrives as small wheel events, whic
    `/tmp/addnonsteamgamefile` first (a raw `steam://addnonsteamgame/…` request doesn't stick); the appid is then read
    back from `shortcuts.vdf`.
 4. **Artwork:** `scripts/steam-art.py` renders cover, wide, hero, logo and icon into `userdata/<id>/config/grid/`, and
-   `SetCustomArtworkForApp` makes the running Steam show them. With a SteamGridDB key, its images replace the generated ones.
+   `SetCustomArtworkForApp` makes the running Steam show them.
 5. **Shortcut icon:** `SetShortcutIcon`, live. Fallback: queued in `pending/shortcut-icons` for the pre-start hook,
    because Steam rewrites `shortcuts.vdf` when it exits.
 6. **Desktop entry:** `~/.local/share/applications/frame-webapp-netflix.desktop` with `StartupWMClass=NetflixWebApp`

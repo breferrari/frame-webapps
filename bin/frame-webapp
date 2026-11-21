@@ -4,8 +4,6 @@
   frame-webapp add ["Name"] https://example.com [--icon FILE] [--color "#rrggbb"] [--controller native]
   frame-webapp list
   frame-webapp art "Name" [--icon FILE] [--color "#rrggbb"]     regenerate the artwork and icon
-                          [--search TERM | --game-id N | --generated]   choose the SteamGridDB entry, or skip SteamGridDB
-  frame-webapp key [KEY | --remove]                              save your SteamGridDB API key for real cover art
   frame-webapp remove "Name" [--keep-data]
   frame-webapp manager      open the Web Apps manager (the app in your Steam library and desktop menu)
   frame-webapp update       update frame-webapps itself (git pull)
@@ -326,43 +324,8 @@ def palette(color, name):
     return ",".join([hexof(h, min(l + 0.18, 0.66), s), hexof(h, l, s), hexof(h, 0.07, s * 0.8)])
 
 
-def steamgriddb_art(name, appid, say, search=None, game_id=None):
-    """Replace the generated artwork with SteamGridDB's, if a key is saved. Returns {kind: path} for what it saved."""
-    sys.path.insert(0, str(SCRIPTS))
-    import steamgriddb as sgdb
-    key = sgdb.load_key()
-    if not key:
-        if search or game_id:
-            raise Problem("No SteamGridDB key saved. Get one at https://www.steamgriddb.com/profile/preferences "
-                          "and save it with:  frame-webapp key <key>")
-        return {}
-    grid = next(iter(STEAM_USERDATA.glob(f"*/config/grid/{appid}p.*")), None)
-    if not grid:
-        return {}
-    try:
-        title = name
-        if not game_id:
-            games = sgdb.search(search or name, key)
-            game = (games[0] if games else None) if search else sgdb.pick_game(name, games)
-            if not game:
-                say(f'No SteamGridDB entry matches "{search or name}"; keeping the generated artwork. '
-                    f'Pick one with:  frame-webapp art "{name}" --search "another name"')
-                return {}
-            game_id, title = game["id"], game.get("name", name)
-        saved = sgdb.fetch_art(game_id, appid, grid.parent, key)
-    except sgdb.SGDBError as e:
-        say(f"{e} Keeping the generated artwork.")
-        return {}
-    if saved:
-        say(f'Artwork from SteamGridDB ("{title}"): {", ".join(saved)}.')
-    else:
-        say(f'SteamGridDB has no usable artwork for "{title}"; keeping the generated artwork.')
-    return saved
-
-
-def make_art(name, shortcut_name, appid, host, image, color, say, sgdb="auto"):
-    """Render the library artwork and the icon, and show them in Steam. Returns (icon path, shown right away?).
-    sgdb: "auto" (use SteamGridDB when a key is saved and the name matches), "off", or {"search": ..} / {"game_id": ..}."""
+def make_art(name, shortcut_name, appid, host, image, color, say):
+    """Render the library artwork and the icon, and show them in Steam. Returns (icon path, shown right away?)."""
     slug = slug_of(name)
     ICONS.mkdir(exist_ok=True)
     art_icon = None
@@ -375,7 +338,7 @@ def make_art(name, shortcut_name, appid, host, image, color, say, sgdb="auto"):
     if art_icon:
         art += ["--icon", str(art_icon)]
     for stale in STEAM_USERDATA.glob(f"*/config/grid/{appid}*.jp*g") if STEAM_USERDATA.is_dir() else []:
-        stale.unlink()   # earlier SteamGridDB images: Steam must not find two files for the same slot
+        stale.unlink()   # JPEG artwork set by another tool: Steam must not find two files for the same slot
     r = subprocess.run(art, capture_output=True, text=True)
     if r.returncode != 0:
         say("Couldn't generate artwork: " + (r.stderr.strip().splitlines() or ["unknown error"])[-1])
@@ -389,10 +352,6 @@ def make_art(name, shortcut_name, appid, host, image, color, say, sgdb="auto"):
         shutil.copy(tile, final_icon)
     if art_icon:
         art_icon.unlink()
-    if sgdb != "off" and r.returncode == 0:
-        saved = steamgriddb_art(name, appid, say, **(sgdb if isinstance(sgdb, dict) else {}))
-        if saved.get("icon") and saved["icon"].suffix == ".png":
-            shutil.copy(saved["icon"], final_icon)
     return final_icon, show_in_steam(appid, shortcut_name, final_icon)
 
 
@@ -478,7 +437,7 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
     return appid
 
 
-def cmd_art(name, icon=None, color=None, say=print, sgdb="auto"):
+def cmd_art(name, icon=None, color=None, say=print):
     app = next((a for a in apps() if a["name"].lower() == name.strip().lower()), None)
     if not app:
         raise Problem(f'No web app called "{name}". See:  frame-webapp list')
@@ -490,36 +449,8 @@ def cmd_art(name, icon=None, color=None, say=print, sgdb="auto"):
     image, site_color = (None, None) if (icon and color) else site_info(app["url"])
     if icon:
         image = load_image(icon)
-    _, live = make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say, sgdb)
+    _, live = make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say)
     say(f'New artwork for "{app["name"]}" is ' + ("in place." if live else "ready. It shows up after the next Steam restart."))
-
-
-def cmd_key(key=None, remove=False, say=print):
-    sys.path.insert(0, str(SCRIPTS))
-    import steamgriddb as sgdb
-    if remove:
-        if sgdb.KEY_FILE.exists():
-            sgdb.KEY_FILE.unlink()
-        return say("SteamGridDB key removed. New artwork will be generated from the site's icon.")
-    if key:
-        key = key.strip()
-        if not re.fullmatch(r"[0-9a-fA-F]{32}", key):
-            raise Problem("That doesn't look like a SteamGridDB key (32 letters and digits). "
-                          "Copy it from https://www.steamgriddb.com/profile/preferences")
-        try:
-            sgdb.search("steam", key)   # a small request to check that the key works
-        except sgdb.SGDBError as e:
-            raise Problem(str(e).split(" Check it")[0]) from None
-        sgdb.KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
-        sgdb.KEY_FILE.write_text(key + "\n")
-        sgdb.KEY_FILE.chmod(0o600)
-        return say('Key saved. New apps get SteamGridDB artwork. For an existing app:  frame-webapp art "Name"')
-    if sgdb.load_key():
-        say("A SteamGridDB key is saved. Remove it with:  frame-webapp key --remove")
-    else:
-        say("No SteamGridDB key saved. Artwork is generated from each site's icon.\n"
-            "For real cover art, get a free key at https://www.steamgriddb.com/profile/preferences (API section)\n"
-            "and save it with:  frame-webapp key <key>")
 
 
 def cmd_list():
@@ -767,11 +698,6 @@ def main():
     sub.add_parser("list", help="list your web apps")
     g = sub.add_parser("art", help="regenerate a web app's artwork and icon")
     g.add_argument("name"); g.add_argument("--icon"); g.add_argument("--color")
-    g.add_argument("--search", help="use the first SteamGridDB entry for this name")
-    g.add_argument("--game-id", type=int, help="use this SteamGridDB entry (the number in its page address)")
-    g.add_argument("--generated", action="store_true", help="don't use SteamGridDB, keep the generated artwork")
-    k = sub.add_parser("key", help="save or remove your SteamGridDB API key")
-    k.add_argument("key", nargs="?"); k.add_argument("--remove", action="store_true")
     r = sub.add_parser("remove", help="remove a web app")
     r.add_argument("name"); r.add_argument("--keep-data", action="store_true", help="keep its browser profile (sign-in)")
     m = sub.add_parser("manager", help="open the Web Apps manager")
@@ -790,10 +716,7 @@ def main():
         elif o.cmd == "list":
             cmd_list()
         elif o.cmd == "art":
-            cmd_art(o.name, o.icon, o.color, sgdb="off" if o.generated else {"game_id": o.game_id} if o.game_id
-                    else {"search": o.search} if o.search else "auto")
-        elif o.cmd == "key":
-            cmd_key(o.key, o.remove)
+            cmd_art(o.name, o.icon, o.color)
         elif o.cmd == "remove":
             cmd_remove(o.name, o.keep_data)
         elif o.cmd == "manager":

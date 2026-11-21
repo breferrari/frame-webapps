@@ -54,7 +54,6 @@ controller:
 | Game streaming site | add `--controller native`: the site gets the controller directly (see below) |
 | List | `frame-webapp list` |
 | New artwork | `frame-webapp art "Name" [--icon file.png] [--color "#e50914"]` |
-| SteamGridDB key | `frame-webapp key <key>` (see below) |
 | Remove | `frame-webapp remove "Name"` (add `--keep-data` to keep the sign-in) |
 | Update the tool | `frame-webapp update` |
 
@@ -75,19 +74,13 @@ Then **open the app from the Steam library**. Two things to know:
 | LT / RT | Previous/next-episode or skip-intro button if the site has one, else −30 s / +30 s |
 | Laser pointer | Still works: tap **grip** to switch between laser and gamepad mode |
 
-### Real cover art (optional)
+### Different artwork
 
-By default the artwork is generated from the site's own icon and colour. If you have a free
-[SteamGridDB](https://www.steamgriddb.com) account, you can use its community artwork instead:
+The artwork is generated from the site's own icon and colour. To change it:
 
-```bash
-frame-webapp key <your API key>      # from steamgriddb.com > Preferences > API
-frame-webapp art "Netflix"           # refresh an existing app
-```
-
-New apps then get SteamGridDB artwork when an entry with the same name exists. If the match is wrong or missing, pick
-one yourself with `frame-webapp art "Name" --search "other name"` or `--game-id <number>`, or go back to the generated
-art with `--generated`. The key stays on your device, in `~/.config/frame-webapps/`.
+- `frame-webapp art "Name" --icon my-image.png --color "#e50914"` uses your own image and colour.
+- For community-made cover art, use [SteamGridDB](https://www.steamgriddb.com) and its own tools. They can set artwork
+  on any entry in your Steam library, including the ones added here.
 
 **Game streaming sites** (Xbox Cloud Gaming, GeForce NOW and the like) read the controller themselves. Add them with
 `--controller native`, or from the manager's grid, where they are marked "Game streaming". They then get the
@@ -142,7 +135,7 @@ Each app also gets a Chromium profile in `~/.var/app/org.chromium.Chromium/confi
 
 ```bash
 systemctl --user disable frame-webapps-chromium-lock.service
-rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp ~/.config/frame-webapps \
+rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
        ~/.local/share/applications/frame-webapps-manager.desktop \
        ~/.config/systemd/user/frame-webapps-chromium-lock.service \
        ~/.config/systemd/user/steam.service.d/frame-webapps-pending.conf
@@ -160,7 +153,6 @@ rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp ~/.config/frame-we
 | `scripts/steamcef.py` | Talks to the running Steam through its local interface: add and remove shortcuts, set artwork and icons, no restart |
 | `scripts/steam-shortcuts.py` | Lists shortcuts; sets icons, renames, removes (edits the binary `shortcuts.vdf`, refuses while Steam runs) |
 | `scripts/steam-art.py` | Renders library artwork (cover, wide, hero, logo, icon) with `rsvg-convert` |
-| `scripts/steamgriddb.py` | Fetches artwork from SteamGridDB with your own API key |
 | `scripts/apply-controller-layout.py` | Assigns a layout file or Steam template to shortcuts (for repairs: new shortcuts don't need it) |
 | `scripts/apply-pending-steam.sh`, `systemd/` | The fallback queue applied before Steam starts, and the lock cleanup |
 
