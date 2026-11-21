@@ -33,6 +33,22 @@ curl -fsSL https://raw.githubusercontent.com/breferrari/frame-webapps/main/insta
 
 No password, nothing system-wide, nothing restarts. See [what it changes](#what-installsh-changes).
 
+### From a PC, without Konsole (experimental)
+
+[FramePort](https://github.com/spoopyghosty0/frameport) installs apps on a Frame from a PC. In FramePort, choose
+"Install from link…" and paste:
+
+```
+https://raw.githubusercontent.com/breferrari/frame-webapps/main/frameport.json
+```
+
+It downloads the release archive, copies it to the Frame and adds **Web Apps** to your Steam library. The first time
+you open Web Apps it finishes the setup by itself. Chromium must be on the Frame
+(`flatpak install flathub org.chromium.Chromium`).
+
+This route is new: the archive passes FramePort's own checks, but nobody has run it end to end yet. If it fails for
+you, please [open an issue](https://github.com/breferrari/frame-webapps/issues).
+
 ## Use
 
 ### The Web Apps manager
@@ -154,6 +170,7 @@ rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
 | `scripts/steamcef.py` | Talks to the running Steam through its local interface: add and remove shortcuts, set artwork and icons, no restart |
 | `scripts/steam-shortcuts.py` | Lists the non-Steam shortcuts (reads the binary `shortcuts.vdf`) |
 | `scripts/steam-art.py` | Renders library artwork (cover, wide, hero, logo, icon) with `rsvg-convert` |
+| `launcher/web-apps.c`, `scripts/make-release.sh`, `frameport.json` | The release archive: a tiny compiled starter for the manager, the build script, and the manifest FramePort reads |
 | `scripts/chromium-stale-lock-cleanup.sh`, `systemd/` | Clears a stale Chromium profile lock at session start |
 
 Not affiliated with Valve or any of the sites you add. Use at your own risk.

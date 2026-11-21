@@ -30,7 +30,7 @@ printf '[Desktop Entry]\nType=Application\nName=Web Apps\nComment=Add websites t
 echo "Installed from the release archive. Apps and icons live in ~/.local/share/frame-webapps." > "$STAGE/.external"
 
 # Same bytes for the same commit: fixed order, owner and time.
-tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="$(git log -1 --format=%cI)" \
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime="$(git log -1 --format=%cI -- . ':!frameport.json')" \
     -C "$WORK" -cf - frame-webapps | gzip -n > "dist/$NAME.tar.gz"
 SHA="$(sha256sum "dist/$NAME.tar.gz" | cut -d' ' -f1)"
 
