@@ -103,9 +103,7 @@ with the D-pad and A like any other web app. It calls the same code as `add` and
 - The server binds to `127.0.0.1` on a free port and stops when the window closes.
 - Every API request needs a token created at launch (passed to the page in its address) and the right `Host` and
   `Origin`, so other pages in a browser and other devices on the network can't use it.
-- "Restart Steam now" is shown only when a change is waiting in the fallback queue. It runs
-  `systemctl --user restart steam.service` through `systemd-run`, outside Steam's own process group, needs two presses
-  and never runs by itself.
+- If a change is waiting in the fallback queue, the page says that it will show the next time Steam starts.
 - On first launch it runs `frame-webapp setup` if the command or the background units are missing, so any way of
   getting the files onto the Frame ends in the same state.
 - `manager/catalogue.json` lists the known sites (name, address, colour, and `"controller": "native"` where needed).

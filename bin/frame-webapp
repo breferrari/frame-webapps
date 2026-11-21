@@ -658,12 +658,6 @@ def cmd_manager(no_browser=False, port=0):
                     with busy:
                         cmd_remove(str(body.get("name", "")), say=lines.append)
                     return self.reply(200, {"ok": True, "message": f'Removed {body.get("name")}.'})
-                if path == "/api/restart-steam":
-                    # Runs outside Steam's own process group, so it survives Steam (and this app) stopping.
-                    subprocess.Popen(["systemd-run", "--user", "--collect", "--quiet", "systemctl", "--user", "restart", "steam.service"],
-                                     env={**os.environ, "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}"},
-                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                    return self.reply(200, {"ok": True, "message": "Restarting Steam..."})
             except Problem as e:   # drop command-line hints: this is the app, not the terminal
                 return self.reply(200, {"ok": False, "error": re.sub(r"\s+(Remove it first|See):\s+frame-webapp.*$", "", str(e))})
             except Exception as e:

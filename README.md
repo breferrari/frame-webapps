@@ -43,8 +43,7 @@ controller:
 - **Add a site** from the grid of known sites with one press, or type just an address under **Another site**
   (the name is taken from the site).
 - **Remove** an app with two presses. It leaves the Steam library at once.
-- Artwork and icons appear right away. If a change couldn't be applied to the running Steam, a **Restart Steam now**
-  button appears. Nothing restarts unless you press it.
+- Artwork and icons appear right away. Nothing ever restarts.
 
 ### The command
 
