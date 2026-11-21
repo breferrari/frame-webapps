@@ -1,0 +1,19 @@
+[
+  {"name": "Netflix",       "url": "https://www.netflix.com",       "color": "#e50914"},
+  {"name": "YouTube",       "url": "https://www.youtube.com",       "color": "#ff0033"},
+  {"name": "Twitch",        "url": "https://www.twitch.tv",         "color": "#9146ff"},
+  {"name": "Crunchyroll",   "url": "https://www.crunchyroll.com",   "color": "#f47521"},
+  {"name": "Disney+",       "url": "https://www.disneyplus.com",    "color": "#113ccf"},
+  {"name": "Prime Video",   "url": "https://www.primevideo.com",    "color": "#1399ff"},
+  {"name": "HBO Max",       "url": "https://www.hbomax.com",        "color": "#5822b4"},
+  {"name": "Hulu",          "url": "https://www.hulu.com",          "color": "#1ce783"},
+  {"name": "Paramount+",    "url": "https://www.paramountplus.com", "color": "#0064ff"},
+  {"name": "Apple TV",      "url": "https://tv.apple.com",          "color": "#555555"},
+  {"name": "Plex",          "url": "https://app.plex.tv",           "color": "#e5a00d"},
+  {"name": "Spotify",       "url": "https://open.spotify.com",      "color": "#1db954"},
+  {"name": "YouTube Music", "url": "https://music.youtube.com",     "color": "#ff0033"},
+  {"name": "Kick",          "url": "https://kick.com",              "color": "#3fbf12"},
+  {"name": "Discord",       "url": "https://discord.com/app",       "color": "#5865f2"},
+  {"name": "Xbox Cloud Gaming", "url": "https://www.xbox.com/play", "color": "#107c10", "controller": "native"},
+  {"name": "GeForce NOW",   "url": "https://play.geforcenow.com",   "color": "#76b900", "controller": "native"}
+]

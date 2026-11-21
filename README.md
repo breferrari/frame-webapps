@@ -9,7 +9,7 @@
 frame-webapp add "Netflix" https://www.netflix.com
 ```
 
-One command puts the site in your Steam library. Then you open it like any game:
+One command, or one press in the **Web Apps** manager, puts the site in your Steam library. Then you open it like any game:
 
 🎮 **The controller works.** Sticks scroll, the D-pad moves between links, A clicks, X plays and pauses.  
 🎬 **Streaming video plays.** Apps run in Chromium with Widevine DRM.  
@@ -18,7 +18,7 @@ One command puts the site in your Steam library. Then you open it like any game:
 🧹 **It's easy to undo.** No password, nothing system-wide, and one command removes an app.  
 
 Made for streaming sites, but you can add any site. Built and tested on a Steam Frame running SteamOS 0.5.10,
-SteamVR 2.19.4 and Flathub Chromium 158 (November 2026). Tried in the headset so far: Crunchyroll.
+SteamVR 2.19.4 and Flathub Chromium 158 (November 2026). Tried in the headset so far: Crunchyroll and Twitch.
 If a site misbehaves, please open an issue with its address.
 
 ## Install
@@ -33,17 +33,33 @@ No password, nothing system-wide, nothing restarts. See [what it changes](#what-
 
 ## Use
 
+### The Web Apps manager
+
+After installing, **Web Apps** is in your Steam library (and in the desktop menu). Open it in the headset and use the
+controller:
+
+- **Add a site** from the grid of known sites with one press, or type just an address under **Another site**
+  (the name is taken from the site).
+- **Remove** an app with two presses. It leaves the Steam library at once.
+- Artwork and icons appear right away. If a change couldn't be applied to the running Steam, a **Restart Steam now**
+  button appears. Nothing restarts unless you press it.
+
+### The command
+
 | | |
 |---|---|
-| Add an app | `frame-webapp add "Name" https://site.example` or **Add Web App** in the desktop menu (asks for the name and address) |
+| Add an app | `frame-webapp add "Name" https://site.example` (the name is optional) |
+| Game streaming site | add `--controller native`: the site gets the controller directly (see below) |
 | List | `frame-webapp list` |
 | New artwork | `frame-webapp art "Name" [--icon file.png] [--color "#e50914"]` |
+| SteamGridDB key | `frame-webapp key <key>` (see below) |
 | Remove | `frame-webapp remove "Name"` (add `--keep-data` to keep the sign-in) |
 | Update the tool | `frame-webapp update` |
 
 Then **open the app from the Steam library**. Two things to know:
 
-- **Artwork and icon appear after the next Steam restart.** The app works right away.
+- **No restart needed.** The app, its artwork and its icon show up in the library right away, and removing an app takes
+  it out of the library at once. Only if Steam's local interface can't be reached do these wait for the next Steam start.
 - **Don't launch it from the multitasking "+" menu.** That menu starts desktop apps, which get the laser pointer only.
 
 ### Controls
@@ -56,6 +72,24 @@ Then **open the app from the Steam library**. Two things to know:
 | LB / RB | −10 s / +10 s |
 | LT / RT | Previous/next-episode or skip-intro button if the site has one, else −30 s / +30 s |
 | Laser pointer | Still works: tap **grip** to switch between laser and gamepad mode |
+
+### Real cover art (optional)
+
+By default the artwork is generated from the site's own icon and colour. If you have a free
+[SteamGridDB](https://www.steamgriddb.com) account, you can use its community artwork instead:
+
+```bash
+frame-webapp key <your API key>      # from steamgriddb.com > Preferences > API
+frame-webapp art "Netflix"           # refresh an existing app
+```
+
+New apps then get SteamGridDB artwork when an entry with the same name exists. If the match is wrong or missing, pick
+one yourself with `frame-webapp art "Name" --search "other name"` or `--game-id <number>`, or go back to the generated
+art with `--generated`. The key stays on your device, in `~/.config/frame-webapps/`.
+
+**Game streaming sites** (Xbox Cloud Gaming, GeForce NOW and the like) read the controller themselves. Add them with
+`--controller native`, or from the manager's grid, where they are marked "Game streaming". They then get the
+controller directly, and the navigation above is off for that app.
 
 ## Limits
 
@@ -93,19 +127,21 @@ Everything lives in your home folder:
 |---|---|
 | `~/.local/share/frame-webapps/` | The tool, your apps (`apps/`), icons, logs and queued changes (`pending/`) |
 | `~/.local/bin/frame-webapp` | The command (a link) |
-| `~/.local/share/applications/frame-webapps-add.desktop` | The "Add Web App" menu entry |
+| `~/.local/share/applications/frame-webapps-manager.desktop` | The "Web Apps" menu entry |
+| A "Web Apps" entry in your Steam library | The manager. It serves its page on this device only (`127.0.0.1`) while it is open |
 | `~/.config/systemd/user/frame-webapps-chromium-lock.service` | At session start, clears a stale Chromium profile lock left by a restart |
-| `~/.config/systemd/user/steam.service.d/frame-webapps-pending.conf` | Just before Steam starts, applies queued shortcut edits (icons, removals). Steam overwrites those files when it exits, so they can only be edited while it's stopped. Does nothing when the queue is empty |
+| `~/.config/systemd/user/steam.service.d/frame-webapps-pending.conf` | A fallback: just before Steam starts, applies shortcut edits (icons, removals) that couldn't be made while it ran. Does nothing when the queue is empty, which is the normal case |
 
 Each app also gets a Chromium profile in `~/.var/app/org.chromium.Chromium/config/webapp-<Name>WebApp/` and a
 `frame-webapp-<name>.desktop` entry (for its window icon).
 
-**Uninstall:** remove your apps with `frame-webapp remove`, then:
+**Uninstall:** remove your apps with `frame-webapp remove`, remove "Web Apps" from the Steam library
+(Manage > Remove non-Steam game), then:
 
 ```bash
 systemctl --user disable frame-webapps-chromium-lock.service
-rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
-       ~/.local/share/applications/frame-webapps-add.desktop \
+rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp ~/.config/frame-webapps \
+       ~/.local/share/applications/frame-webapps-manager.desktop \
        ~/.config/systemd/user/frame-webapps-chromium-lock.service \
        ~/.config/systemd/user/steam.service.d/frame-webapps-pending.conf
 ```
@@ -114,14 +150,17 @@ rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
 
 | Path | What |
 |---|---|
-| `bin/frame-webapp` | The command: add, list, art, remove, gui, update |
+| `bin/frame-webapp` | The command: add, list, art, remove, manager, setup, update |
+| `manager/` | The Web Apps manager: its page, the catalogue of known sites, and its Steam launcher |
 | `webapps/_chromium-webapp.sh` | Launcher: Chromium app mode, one profile per app, Widevine, stale-lock fix, udev access, extension, logs |
 | `webapps/extensions/frame-gamepad/` | The controller extension (MV3 content script, no permissions, no network) |
 | `webapps/launch-via-steam.sh` | Starts a shortcut *through* Steam from a `.desktop` file |
+| `scripts/steamcef.py` | Talks to the running Steam through its local interface: add and remove shortcuts, set artwork and icons, no restart |
 | `scripts/steam-shortcuts.py` | Lists shortcuts; sets icons, renames, removes (edits the binary `shortcuts.vdf`, refuses while Steam runs) |
 | `scripts/steam-art.py` | Renders library artwork (cover, wide, hero, logo, icon) with `rsvg-convert` |
+| `scripts/steamgriddb.py` | Fetches artwork from SteamGridDB with your own API key |
 | `scripts/apply-controller-layout.py` | Assigns a layout file or Steam template to shortcuts (for repairs: new shortcuts don't need it) |
-| `scripts/apply-pending-steam.sh`, `systemd/` | The queue applied before Steam starts, and the lock cleanup |
+| `scripts/apply-pending-steam.sh`, `systemd/` | The fallback queue applied before Steam starts, and the lock cleanup |
 
 Not affiliated with Valve or any of the sites you add. Use at your own risk.
 

@@ -62,19 +62,53 @@ and the pointing stick scrolls (laser scroll arrives as small wheel events, whic
 2. **Icon and colour:** downloads the page, reads its icon links, web manifest and `theme-color`, and picks the largest
    usable icon (PNG, JPEG, SVG or ICO). With no theme colour it takes the icon's dominant colour. Sites that block
    automated requests get a plain tile; pass `--icon` and `--color` to choose your own.
-3. **Adds it to Steam, live:** `steamos-add-to-steam apps/Netflix`. This works while Steam runs because that tool touches
-   `/tmp/addnonsteamgamefile` first; a raw `steam://addnonsteamgame/…` request doesn't stick. The new shortcut's appid
-   is then read back from `shortcuts.vdf` (it can't be computed in advance).
-4. **Artwork:** `scripts/steam-art.py` renders cover, wide, hero, logo and icon into `userdata/<id>/config/grid/`.
-5. **Shortcut icon:** queued in `pending/shortcut-icons`, because Steam rewrites `shortcuts.vdf` when it exits. The
-   pre-start hook applies it the next time Steam starts.
+3. **Adds it to Steam, live:** `SteamClient.Apps.AddShortcut(...)` through Steam's local interface (see below), which
+   returns the new appid. Fallback: `steamos-add-to-steam apps/Netflix`, which works while Steam runs because it touches
+   `/tmp/addnonsteamgamefile` first (a raw `steam://addnonsteamgame/…` request doesn't stick); the appid is then read
+   back from `shortcuts.vdf`.
+4. **Artwork:** `scripts/steam-art.py` renders cover, wide, hero, logo and icon into `userdata/<id>/config/grid/`, and
+   `SetCustomArtworkForApp` makes the running Steam show them. With a SteamGridDB key, its images replace the generated ones.
+5. **Shortcut icon:** `SetShortcutIcon`, live. Fallback: queued in `pending/shortcut-icons` for the pre-start hook,
+   because Steam rewrites `shortcuts.vdf` when it exits.
 6. **Desktop entry:** `~/.local/share/applications/frame-webapp-netflix.desktop` with `StartupWMClass=NetflixWebApp`
    (window icon) and `Exec=…/launch-via-steam.sh <appid>`.
 
 No controller layout step is needed: a new shortcut already gets Steam's gamepad layout.
 
+With `--controller native` the launcher is written without `WEBAPP_EXTENSIONS=frame-gamepad`. The page then reads the
+virtual Xbox pad itself through the Gamepad API (still thanks to the gamepad layout and the udev access), which is what
+game streaming sites expect. The navigation extension would otherwise scroll and press "back" during play.
+
 `frame-webapp remove` deletes the launcher, desktop entry, icon, artwork and (unless `--keep-data`) the Chromium
-profile, and queues the shortcut's removal for the next Steam start.
+profile, and removes the shortcut with `RemoveShortcut` (fallback: queued for the next Steam start).
+
+### Steam's local interface
+
+Steam's interface is a web page, and on the Frame its debugging port listens on `127.0.0.1:8080`. `scripts/steamcef.py`
+connects to the `SharedJSContext` page (Chrome DevTools protocol over a WebSocket, standard library only) and calls the
+functions the interface itself uses: `SteamClient.Apps.AddShortcut`, `RemoveShortcut`, `SetShortcutIcon` and
+`SetCustomArtworkForApp(appid, base64, "png"|"jpg", type)` with type 0 = cover, 1 = hero, 2 = logo, 3 = wide.
+That is why nothing needs a Steam restart. If the port isn't reachable, every step falls back to the file-based route
+above, and the changes show after the next Steam start.
+
+One quirk seen once: on a shortcut that had been added through the fallback route, `SetShortcutIcon` stored the path
+but Steam never loaded the image. Removing the shortcut and adding it again through `AddShortcut` fixed it.
+
+## The Web Apps manager
+
+`frame-webapp manager` (the "Web Apps" entry in Steam) starts a small HTTP server inside the same process and shows
+`manager/index.html` in the usual Chromium app-mode setup, with the `frame-gamepad` extension, so the page is driven
+with the D-pad and A like any other web app. It calls the same code as `add` and `remove`.
+
+- The server binds to `127.0.0.1` on a free port and stops when the window closes.
+- Every API request needs a token created at launch (passed to the page in its address) and the right `Host` and
+  `Origin`, so other pages in a browser and other devices on the network can't use it.
+- "Restart Steam now" is shown only when a change is waiting in the fallback queue. It runs
+  `systemctl --user restart steam.service` through `systemd-run`, outside Steam's own process group, needs two presses
+  and never runs by itself.
+- On first launch it runs `frame-webapp setup` if the command or the background units are missing, so any way of
+  getting the files onto the Frame ends in the same state.
+- `manager/catalogue.json` lists the known sites (name, address, colour, and `"controller": "native"` where needed).
 
 ## Troubleshooting
 

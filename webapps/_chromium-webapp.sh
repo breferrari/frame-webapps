@@ -41,7 +41,7 @@ if [ -n "${WEBAPP_EXTENSIONS:-}" ]; then
   for e in "${exts[@]}"; do [ -f "$EXT_ROOT/$e/manifest.json" ] && dirs="${dirs:+$dirs,}$EXT_ROOT/$e"; done
   [ -n "$dirs" ] && EXT_ARGS=(--load-extension="$dirs")
 fi
-echo "$(date '+%F %T') $CLASS $URL extensions=${WEBAPP_EXTENSIONS:-none}" >> "$ROOT/logs/launch.log"
+echo "$(date '+%F %T') $CLASS ${URL%%\?*} extensions=${WEBAPP_EXTENSIONS:-none}" >> "$ROOT/logs/launch.log"   # without any query (it may hold a token)
 
 # Chromium's own log (media/DRM/GPU errors, and the extension's "[frame-gamepad]" lines), last run only.
 exec > "$ROOT/logs/$CLASS-chromium.log" 2>&1

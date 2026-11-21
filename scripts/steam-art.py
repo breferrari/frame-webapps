@@ -2,7 +2,7 @@
 """Generate Steam library artwork for a non-Steam shortcut (cover, wide header, hero, logo, icon).
 
   steam-art.py "<Steam app name>" [--appid N] [--label TEXT] [--subtitle TEXT]
-               [--colors "#light,#base,#dark"] [--glyph play|none] [--icon file.png|file.jpg]
+               [--colors "#light,#base,#dark"] [--glyph play|grid|none] [--icon file.png|file.jpg]
 
 Finds the shortcut's appid in shortcuts.vdf by its name (or takes --appid) and renders PNGs with rsvg-convert into
 userdata/<id>/config/grid/. Safe while Steam runs; Steam shows new art after it restarts.
@@ -55,6 +55,13 @@ def glyph_svg(kind, cx, cy, r, color):
     if kind == "play":
         return (f"<circle cx='{cx}' cy='{cy}' r='{r}' fill='none' stroke='{color}' stroke-width='{r*0.12}'/>"
                 f"<path d='M {cx - r*0.32} {cy - r*0.45} L {cx + r*0.5} {cy} L {cx - r*0.32} {cy + r*0.45} Z' fill='{color}'/>")
+    if kind == "grid":   # three app tiles and a plus
+        s, g = r * 0.82, r * 0.2
+        tile = lambda x, y: f"<rect x='{x}' y='{y}' width='{s}' height='{s}' rx='{s*0.22}' fill='{color}'/>"
+        px, py, w = cx + g / 2 + s / 2, cy + g / 2 + s / 2, s * 0.16
+        return (tile(cx - s - g / 2, cy - s - g / 2) + tile(cx + g / 2, cy - s - g / 2) + tile(cx - s - g / 2, cy + g / 2)
+                + f"<rect x='{px - s*0.36}' y='{py - w/2}' width='{s*0.72}' height='{w}' rx='{w/2}' fill='{color}'/>"
+                + f"<rect x='{px - w/2}' y='{py - s*0.36}' width='{w}' height='{s*0.72}' rx='{w/2}' fill='{color}'/>")
     return ""
 
 
@@ -113,7 +120,7 @@ if __name__ == "__main__":
     a.add_argument("name"); a.add_argument("--subtitle", default="")
     a.add_argument("--appid", type=int, help="the shortcut's appid (default: look it up by name)")
     a.add_argument("--colors", default="#3d7bff,#0a2a6b,#05070f")
-    a.add_argument("--glyph", default="play", choices=["play", "none"]); a.add_argument("--icon")
+    a.add_argument("--glyph", default="play", choices=["play", "grid", "none"]); a.add_argument("--icon")
     a.add_argument("--label", help="text on the artwork (default: the shortcut name)")
     o = a.parse_args()
     render(o.name, o.subtitle, o.colors.split(","), o.glyph, o.icon, o.label, o.appid)

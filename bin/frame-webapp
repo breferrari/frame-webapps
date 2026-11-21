@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """frame-webapp: turn any website into a Steam Frame app with controller support.
 
-  frame-webapp add "Name" https://example.com [--icon FILE] [--color "#rrggbb"]
+  frame-webapp add ["Name"] https://example.com [--icon FILE] [--color "#rrggbb"] [--controller native]
   frame-webapp list
   frame-webapp art "Name" [--icon FILE] [--color "#rrggbb"]     regenerate the artwork and icon
+                          [--search TERM | --game-id N | --generated]   choose the SteamGridDB entry, or skip SteamGridDB
+  frame-webapp key [KEY | --remove]                              save your SteamGridDB API key for real cover art
   frame-webapp remove "Name" [--keep-data]
-  frame-webapp gui          ask for the name and address in dialogs (used by the "Add Web App" menu entry)
+  frame-webapp manager      open the Web Apps manager (the app in your Steam library and desktop menu)
   frame-webapp update       update frame-webapps itself (git pull)
+  frame-webapp setup        (re)create the command, menu entry and background units (install.sh runs this)
+
+Without a name, "add" uses the site's own title. --controller native is for sites that read the controller themselves
+(game streaming such as Xbox Cloud Gaming): the app then gets the gamepad directly, without the navigation extension.
 
 "add" creates a launcher in apps/, adds it to your Steam library, generates artwork from the site's own icon and
 colour, and sets up the window icon. Open the app from the Steam library. See docs/web-apps.md for how it works.
@@ -24,6 +30,9 @@ CHROMIUM = "org.chromium.Chromium"
 PROFILES = Path.home() / ".var/app" / CHROMIUM / "config"
 STEAM_USERDATA = Path.home() / ".local/share/Steam/userdata"
 HOOK = Path.home() / ".config/systemd/user/steam.service.d/frame-webapps-pending.conf"
+MANAGER_DIR = ROOT / "manager"
+MANAGER_LAUNCHER = MANAGER_DIR / "Web Apps"      # the filename is the name shown in Steam
+MANAGER_CLASS = "FrameWebAppsManager"
 UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
 
@@ -39,8 +48,15 @@ def shortcuts():
     for line in out.splitlines():
         parts = (line.split("\t") + ["", "", "", ""])[:4]
         if parts[0].isdigit():
-            rows.append({"appid": int(parts[0]), "name": parts[1], "exe": parts[2].strip('"'), "icon": parts[3]})
+            exe = parts[2].strip('"')
+            rows.append({"appid": int(parts[0]), "name": parts[1], "exe": exe, "real": os.path.realpath(exe), "icon": parts[3]})
     return rows
+
+
+def shortcut_for(launcher, rows=None):
+    """The Steam shortcut that starts this launcher (directly or through a link to it), or None."""
+    real = os.path.realpath(launcher)
+    return next((s for s in (shortcuts() if rows is None else rows) if s["real"] == real), None)
 
 
 def steam_running():
@@ -56,11 +72,61 @@ def queue(filename, line):
         f.write(line + "\n")
 
 
+def steam_live():
+    """The module that talks to the running Steam client (scripts/steamcef.py)."""
+    if str(SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(SCRIPTS))
+    import steamcef
+    return steamcef
+
+
+def show_in_steam(appid, shortcut_name, icon=None):
+    """Make the running Steam show the app's artwork and icon now. Returns True if it did.
+    Otherwise the files are in place for the next Steam start, and the icon is queued for it."""
+    cef = steam_live()
+    grids = list(STEAM_USERDATA.glob("*/config/grid")) if STEAM_USERDATA.is_dir() else []
+    try:
+        for kind, base in (("cover", f"{appid}p"), ("wide", f"{appid}"), ("hero", f"{appid}_hero"), ("logo", f"{appid}_logo")):
+            image = next((g / f"{base}.{ext}" for g in grids for ext in ("png", "jpg") if (g / f"{base}.{ext}").exists()), None)
+            if image:
+                cef.set_artwork(appid, image, kind)
+        if icon and Path(icon).exists():
+            cef.set_icon(appid, icon)
+        return True
+    except cef.SteamUnavailable:
+        if icon and Path(icon).exists():
+            queue("shortcut-icons", f"{shortcut_name}|{icon}")
+        return False
+
+
+def add_to_steam(launcher):
+    """Add a launcher to the Steam library while Steam runs, and return the new shortcut (or None)."""
+    before = {s["appid"] for s in shortcuts()}
+    cef = steam_live()
+    try:   # Steam's own "add shortcut" function, through its local interface
+        appid = cef.add_shortcut(Path(launcher).name, launcher)
+        for _ in range(12):
+            new = next((s for s in shortcuts() if s["appid"] == appid), None)
+            if new:
+                return new
+            time.sleep(0.25)
+        return {"appid": appid, "name": Path(launcher).name, "exe": str(launcher), "real": os.path.realpath(launcher), "icon": ""}
+    except cef.SteamUnavailable:
+        pass
+    subprocess.run(["steamos-add-to-steam", str(launcher)], capture_output=True)
+    for _ in range(20):
+        time.sleep(0.5)
+        new = next((s for s in shortcuts() if s["appid"] not in before and s["exe"] == str(launcher)), None)
+        if new:
+            return new
+    return None
+
+
 # ---------------------------------------------------------------- apps on disk
 def read_app(path):
-    info = {"name": path.name, "path": path, "url": "", "class": ""}
+    info = {"name": path.name, "path": path, "url": "", "class": "", "controller": "extension"}
     for line in path.read_text(errors="replace").splitlines():
-        m = re.match(r"# (url|class): (.*)", line)
+        m = re.match(r"# (url|class|controller): (.*)", line)
         if m:
             info[m.group(1)] = m.group(2).strip()
     return info
@@ -225,6 +291,28 @@ def icon_color(image):
         return None
 
 
+def suggest_name(url):
+    """A short app name for a site: the first part of its page title, else its domain ("netflix.com" -> "Netflix")."""
+    host = re.sub(r"^www\.", "", urllib.parse.urlparse(url).netloc.split(":")[0])
+    labels = host.split(".")
+    fallback = (labels[-2] if len(labels) >= 2 else labels[0]).capitalize()
+    try:
+        html = http_get(url, 300_000)[0].decode("utf-8", "replace")
+        m = re.search(r"<title[^>]*>(.*?)</title>", html, re.I | re.S)
+        title = re.sub(r"\s+", " ", unescape(m.group(1))).strip() if m else ""   # also folds thin and non-breaking spaces
+        first = re.split(r"\s+[-|–—:·•]\s+|\s*[|–—·•]\s*", title)[0].strip()
+        first = re.sub(r"[/\\|\"$`\x00-\x1f]", "", first)
+        words, label = first.split(), re.sub(r"[^a-z0-9]", "", fallback.lower())
+        for n in range(1, len(words) + 1):   # "Netflix Germany" on netflix.com -> "Netflix"; "Prime Video: ..." -> "Prime Video"
+            if re.sub(r"[^a-z0-9]", "", "".join(words[:n]).lower()) == label:
+                return " ".join(words[:n])
+        if 2 <= len(first) <= 24 and not first.startswith((".", "_", "-")):
+            return first
+    except Exception:
+        pass
+    return fallback
+
+
 def palette(color, name):
     """Three gradient stops (light, base, dark) from the site's colour, or from a hue picked by the name."""
     if color:
@@ -238,8 +326,43 @@ def palette(color, name):
     return ",".join([hexof(h, min(l + 0.18, 0.66), s), hexof(h, l, s), hexof(h, 0.07, s * 0.8)])
 
 
-def make_art(name, shortcut_name, appid, host, image, color, say):
-    """Render the library artwork and the icon. Returns the icon path (it may not exist if rendering failed)."""
+def steamgriddb_art(name, appid, say, search=None, game_id=None):
+    """Replace the generated artwork with SteamGridDB's, if a key is saved. Returns {kind: path} for what it saved."""
+    sys.path.insert(0, str(SCRIPTS))
+    import steamgriddb as sgdb
+    key = sgdb.load_key()
+    if not key:
+        if search or game_id:
+            raise Problem("No SteamGridDB key saved. Get one at https://www.steamgriddb.com/profile/preferences "
+                          "and save it with:  frame-webapp key <key>")
+        return {}
+    grid = next(iter(STEAM_USERDATA.glob(f"*/config/grid/{appid}p.*")), None)
+    if not grid:
+        return {}
+    try:
+        title = name
+        if not game_id:
+            games = sgdb.search(search or name, key)
+            game = (games[0] if games else None) if search else sgdb.pick_game(name, games)
+            if not game:
+                say(f'No SteamGridDB entry matches "{search or name}"; keeping the generated artwork. '
+                    f'Pick one with:  frame-webapp art "{name}" --search "another name"')
+                return {}
+            game_id, title = game["id"], game.get("name", name)
+        saved = sgdb.fetch_art(game_id, appid, grid.parent, key)
+    except sgdb.SGDBError as e:
+        say(f"{e} Keeping the generated artwork.")
+        return {}
+    if saved:
+        say(f'Artwork from SteamGridDB ("{title}"): {", ".join(saved)}.')
+    else:
+        say(f'SteamGridDB has no usable artwork for "{title}"; keeping the generated artwork.')
+    return saved
+
+
+def make_art(name, shortcut_name, appid, host, image, color, say, sgdb="auto"):
+    """Render the library artwork and the icon, and show them in Steam. Returns (icon path, shown right away?).
+    sgdb: "auto" (use SteamGridDB when a key is saved and the name matches), "off", or {"search": ..} / {"game_id": ..}."""
     slug = slug_of(name)
     ICONS.mkdir(exist_ok=True)
     art_icon = None
@@ -251,6 +374,8 @@ def make_art(name, shortcut_name, appid, host, image, color, say):
            "--subtitle", re.sub(r"^www\.", "", host).upper(), "--colors", palette(color, name)]
     if art_icon:
         art += ["--icon", str(art_icon)]
+    for stale in STEAM_USERDATA.glob(f"*/config/grid/{appid}*.jp*g") if STEAM_USERDATA.is_dir() else []:
+        stale.unlink()   # earlier SteamGridDB images: Steam must not find two files for the same slot
     r = subprocess.run(art, capture_output=True, text=True)
     if r.returncode != 0:
         say("Couldn't generate artwork: " + (r.stderr.strip().splitlines() or ["unknown error"])[-1])
@@ -264,9 +389,11 @@ def make_art(name, shortcut_name, appid, host, image, color, say):
         shutil.copy(tile, final_icon)
     if art_icon:
         art_icon.unlink()
-    if final_icon.exists():
-        queue("shortcut-icons", f"{shortcut_name}|{final_icon}")
-    return final_icon
+    if sgdb != "off" and r.returncode == 0:
+        saved = steamgriddb_art(name, appid, say, **(sgdb if isinstance(sgdb, dict) else {}))
+        if saved.get("icon") and saved["icon"].suffix == ".png":
+            shutil.copy(saved["icon"], final_icon)
+    return final_icon, show_in_steam(appid, shortcut_name, final_icon)
 
 
 def load_image(icon):
@@ -277,16 +404,18 @@ def load_image(icon):
 
 
 # ---------------------------------------------------------------- commands
-def cmd_add(name, url, icon=None, color=None, say=print):
-    name = name.strip()
-    if not name or len(name) > 40 or re.search(r"[/\\|\"$`\x00-\x1f]", name) or name.startswith((".", "_", "-")):
-        raise Problem("Pick a name of up to 40 characters, without / \\ | \" $ ` and not starting with . _ or -")
+def cmd_add(name, url, icon=None, color=None, say=print, controller="extension"):
     url = url.strip()
     if "://" not in url:
         url = "https://" + url
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or "." not in parsed.netloc or re.search(r"[\s\"'`$\\<>]", url):
         raise Problem(f"That doesn't look like a web address: {url}")
+    if controller not in ("extension", "native"):
+        raise Problem("--controller must be extension or native")
+    name = (name or "").strip() or suggest_name(url)
+    if not name or len(name) > 40 or re.search(r"[/\\|\"$`\x00-\x1f]", name) or name.startswith((".", "_", "-")):
+        raise Problem("Pick a name of up to 40 characters, without / \\ | \" $ ` and not starting with . _ or -")
     for tool in ("flatpak", "rsvg-convert", "steamos-add-to-steam"):
         if not shutil.which(tool):
             raise Problem(f"Missing program: {tool}")
@@ -316,25 +445,19 @@ def cmd_add(name, url, icon=None, color=None, say=print):
         f'# Web app "{name}", generated by frame-webapp. Remove it with: frame-webapp remove "{name}"\n'
         f"# url: {url}\n"
         f"# class: {cls}\n"
-        'WEBAPP_EXTENSIONS=frame-gamepad exec "$(dirname "$(readlink -f "$0")")/../webapps/_chromium-webapp.sh" '
+        f"# controller: {controller}\n"
+        + ("" if controller == "native" else "WEBAPP_EXTENSIONS=frame-gamepad ") +
+        'exec "$(dirname "$(readlink -f "$0")")/../webapps/_chromium-webapp.sh" '
         f'{cls} {shlex.quote(url)} "$@"\n')
     launcher.chmod(0o755)
 
-    before = {s["appid"] for s in shortcuts()}
-    subprocess.run(["steamos-add-to-steam", str(launcher)], capture_output=True)
-    new = None
-    for _ in range(20):
-        time.sleep(0.5)
-        fresh = [s for s in shortcuts() if s["appid"] not in before]
-        new = next((s for s in fresh if s["exe"] == str(launcher)), None)
-        if new:
-            break
+    new = add_to_steam(launcher)
     if not new:
         launcher.unlink()
         raise Problem("Steam didn't add the shortcut. Check that Steam is running (not just SteamVR) and try again.")
     appid = new["appid"]
 
-    final_icon = make_art(name, new["name"], appid, parsed.netloc, image, color or site_color, say)
+    final_icon, live = make_art(name, new["name"], appid, parsed.netloc, image, color or site_color, say)
 
     DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
     (DESKTOP_DIR / f"frame-webapp-{slug}.desktop").write_text(
@@ -346,17 +469,20 @@ def cmd_add(name, url, icon=None, color=None, say=print):
     subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
 
     say(f'Added "{name}" to your Steam library.')
+    if controller == "native":
+        say("This app gets the controller directly (no navigation extension). Use the laser pointer for its menus if needed.")
     say("Open it from the Steam library (not the \"+\" menu) to get theater mode and controller support.")
-    say("Its artwork and icon show up after the next Steam restart." +
-        ("" if HOOK.exists() else " (The icon needs the restart hook: run install.sh.)"))
+    if not live:
+        say("Its artwork and icon show up after the next Steam restart." +
+            ("" if HOOK.exists() else " (The icon needs the restart hook: run install.sh.)"))
     return appid
 
 
-def cmd_art(name, icon=None, color=None, say=print):
+def cmd_art(name, icon=None, color=None, say=print, sgdb="auto"):
     app = next((a for a in apps() if a["name"].lower() == name.strip().lower()), None)
     if not app:
         raise Problem(f'No web app called "{name}". See:  frame-webapp list')
-    s = next((s for s in shortcuts() if s["exe"] == str(app["path"])), None)
+    s = shortcut_for(app["path"])
     if not s:
         raise Problem(f'"{app["name"]}" isn\'t in the Steam library.')
     if color and not re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", color):
@@ -364,19 +490,47 @@ def cmd_art(name, icon=None, color=None, say=print):
     image, site_color = (None, None) if (icon and color) else site_info(app["url"])
     if icon:
         image = load_image(icon)
-    make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say)
-    say(f'New artwork for "{app["name"]}" is ready. It shows up after the next Steam restart.')
+    _, live = make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say, sgdb)
+    say(f'New artwork for "{app["name"]}" is ' + ("in place." if live else "ready. It shows up after the next Steam restart."))
+
+
+def cmd_key(key=None, remove=False, say=print):
+    sys.path.insert(0, str(SCRIPTS))
+    import steamgriddb as sgdb
+    if remove:
+        if sgdb.KEY_FILE.exists():
+            sgdb.KEY_FILE.unlink()
+        return say("SteamGridDB key removed. New artwork will be generated from the site's icon.")
+    if key:
+        key = key.strip()
+        if not re.fullmatch(r"[0-9a-fA-F]{32}", key):
+            raise Problem("That doesn't look like a SteamGridDB key (32 letters and digits). "
+                          "Copy it from https://www.steamgriddb.com/profile/preferences")
+        try:
+            sgdb.search("steam", key)   # a small request to check that the key works
+        except sgdb.SGDBError as e:
+            raise Problem(str(e).split(" Check it")[0]) from None
+        sgdb.KEY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        sgdb.KEY_FILE.write_text(key + "\n")
+        sgdb.KEY_FILE.chmod(0o600)
+        return say('Key saved. New apps get SteamGridDB artwork. For an existing app:  frame-webapp art "Name"')
+    if sgdb.load_key():
+        say("A SteamGridDB key is saved. Remove it with:  frame-webapp key --remove")
+    else:
+        say("No SteamGridDB key saved. Artwork is generated from each site's icon.\n"
+            "For real cover art, get a free key at https://www.steamgriddb.com/profile/preferences (API section)\n"
+            "and save it with:  frame-webapp key <key>")
 
 
 def cmd_list():
-    by_exe = {s["exe"]: s for s in shortcuts()}
+    in_steam = shortcuts()
     rows = apps()
     if not rows:
         print('No web apps yet. Add one:  frame-webapp add "Name" https://example.com')
         return
     width = max(len(a["name"]) for a in rows)
     for a in rows:
-        s = by_exe.get(str(a["path"]))
+        s = shortcut_for(a["path"], in_steam)
         state = f"in Steam (appid {s['appid']})" if s else "not in Steam"
         print(f"{a['name']:<{width}}  {a['url']:<40}  {state}")
 
@@ -389,7 +543,15 @@ def cmd_remove(name, keep_data=False, say=print):
     profile = PROFILES / f"webapp-{cls}"
     if subprocess.run(["pgrep", "-f", "--", f"--user-data-dir={profile}( |$)"], capture_output=True).returncode == 0:
         raise Problem(f'"{app["name"]}" is running. Close it first.')
-    s = next((s for s in shortcuts() if s["exe"] == str(launcher)), None)
+    s = shortcut_for(launcher)
+    removed_live = False
+    if s:
+        cef = steam_live()
+        try:
+            cef.remove_shortcut(s["appid"])
+            removed_live = True
+        except cef.SteamUnavailable:
+            pass
     if s and STEAM_USERDATA.is_dir():
         for grid in STEAM_USERDATA.glob("*/config/grid"):
             for f in grid.glob(f"{s['appid']}*"):
@@ -401,69 +563,245 @@ def cmd_remove(name, keep_data=False, say=print):
         shutil.rmtree(profile)
     subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
     say(f'Removed "{app["name"]}"' + (" (kept its browser data and sign-in)." if keep_data else " and its browser data."))
-    if s:
-        queue("shortcut-removals", f"{launcher}|")
+    if removed_live:
+        say("It's gone from your Steam library too.")
+    if s and not removed_live:
+        queue("shortcut-removals", f"{s['exe']}|")
         say("Its Steam library entry disappears at the next Steam restart" +
             (". " if HOOK.exists() else " once the restart hook is installed (run install.sh). ") +
             "To remove it right now: select it in Steam, then Manage > Remove non-Steam game.")
 
 
-def dialog(*args):
-    tool = shutil.which("kdialog")
-    if tool:
-        r = subprocess.run([tool, "--title", "Add Web App", *args], capture_output=True, text=True)
-        return r.returncode == 0, r.stdout.strip()
-    tool = shutil.which("zenity")
-    if not tool:
-        raise Problem("No dialog program found (kdialog or zenity). Use:  frame-webapp add \"Name\" https://example.com")
-    kind, text = args[0], args[1]
-    z = {"--inputbox": ["--entry", "--text", text], "--msgbox": ["--info", "--text", text],
-         "--error": ["--error", "--text", text]}[kind]
-    r = subprocess.run([tool, "--title", "Add Web App", *z], capture_output=True, text=True)
-    return r.returncode == 0, r.stdout.strip()
+def userctl(*args):
+    # Desktop Mode runs a nested session whose XDG_RUNTIME_DIR is not the one systemd --user listens on.
+    return subprocess.run(["systemctl", "--user", *args], capture_output=True,
+                          env={**os.environ, "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}"}).returncode == 0
 
 
-def cmd_gui():
-    ok, name = dialog("--inputbox", "Name of the app, as it should appear in Steam:")
-    if not ok or not name:
+def is_set_up():
+    link = Path.home() / ".local/bin/frame-webapp"
+    return HOOK.exists() and link.is_symlink() and os.path.realpath(link) == os.path.realpath(__file__)
+
+
+def cmd_setup(say=print):
+    """Create the command, the background units and the manager's Steam and menu entries. Safe to run again."""
+    for d in (APPS, ICONS, PENDING, ROOT / "logs"):
+        d.mkdir(exist_ok=True)
+    bindir = Path.home() / ".local/bin"
+    bindir.mkdir(parents=True, exist_ok=True)
+    link = bindir / "frame-webapp"
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(ROOT / "bin/frame-webapp")
+    units = Path.home() / ".config/systemd/user"
+    (units / "steam.service.d").mkdir(parents=True, exist_ok=True)
+    fill = lambda name: (ROOT / "systemd" / name).read_text().replace("@ROOT@", str(ROOT))
+    (units / "frame-webapps-chromium-lock.service").write_text(fill("frame-webapps-chromium-lock.service"))
+    HOOK.write_text(fill("steam-pending.conf"))
+    if userctl("daemon-reload"):
+        userctl("enable", "frame-webapps-chromium-lock.service")
+    else:
+        say("Couldn't reach systemd; the background units take effect at the next login.")
+    old = DESKTOP_DIR / "frame-webapps-add.desktop"   # the earlier two-dialog entry
+    if old.exists():
+        old.unlink()
+    cmd_setup_manager(say)
+
+
+def cmd_setup_manager(say=print):
+    """Put the Web Apps manager into the Steam library (once), with artwork and a desktop menu entry."""
+    DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
+    icon = ICONS / "web-apps-manager.png"
+    s = shortcut_for(MANAGER_LAUNCHER)
+    if not s:
+        if not steam_running():
+            say("Steam isn't running, so the Web Apps manager wasn't added to the Steam library. "
+                "Start Steam and run:  frame-webapp setup-manager")
+        else:
+            s = add_to_steam(MANAGER_LAUNCHER)
+            if not s:
+                say("Steam didn't add the Web Apps manager. Try later:  frame-webapp setup-manager")
+    if s:
+        r = subprocess.run([sys.executable, "-I", str(SCRIPTS / "steam-art.py"), s["name"], "--appid", str(s["appid"]),
+                            "--glyph", "grid", "--subtitle", "ADD AND MANAGE", "--colors", "#4d8dff,#1f4fd1,#070b1c"],
+                           capture_output=True, text=True)
+        tile = next(iter(STEAM_USERDATA.glob(f"*/config/grid/{s['appid']}_icon.png")), None)
+        live = False
+        if r.returncode == 0 and tile:
+            ICONS.mkdir(exist_ok=True)
+            shutil.copy(tile, icon)
+            live = show_in_steam(s["appid"], s["name"], icon)
+        say('"Web Apps" is in your Steam library.' + ("" if live else " Its artwork and icon show up after the next Steam restart."))
+    (DESKTOP_DIR / "frame-webapps-manager.desktop").write_text(
+        "[Desktop Entry]\nType=Application\nName=Web Apps\n"
+        "Comment=Add websites to Steam as apps with controller support (frame-webapps)\n"
+        f'Exec="{ROOT}/bin/frame-webapp" manager\n'
+        f"Icon={icon if icon.exists() else 'applications-internet'}\n"
+        f"StartupWMClass={MANAGER_CLASS}\nCategories=Utility;\nTerminal=false\n")
+    subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
+
+
+def manager_state():
+    in_steam = shortcuts()
+    mine = []
+    for a in apps():
+        icon = ICONS / f"{slug_of(a['name'])}.png"
+        mine.append({"name": a["name"], "url": a["url"], "inSteam": shortcut_for(a["path"], in_steam) is not None,
+                     "icon": f"/icons/{icon.name}" if icon.exists() else None})
+    names = {a["name"].lower() for a in mine}
+    catalogue = json.loads((MANAGER_DIR / "catalogue.json").read_text())
+    for c in catalogue:
+        c["added"] = c["name"].lower() in names
+    return {"apps": mine, "catalogue": catalogue, "steamRunning": steam_running(),
+            "restartNeeded": PENDING.is_dir() and any(PENDING.iterdir())}
+
+
+def cmd_manager(no_browser=False, port=0):
+    """Serve the manager page on 127.0.0.1 and show it in Chromium app mode (with the controller extension)."""
+    import http.server, secrets, threading
+    profile = PROFILES / f"webapp-{MANAGER_CLASS}"
+    if not no_browser:
+        # Already open somewhere (for example on the desktop)? Take over, so that opening it always shows it here.
+        pattern = f"--user-data-dir={profile}( |$)"
+        if subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True).returncode == 0:
+            subprocess.run(["pkill", "-f", "--", pattern], capture_output=True)
+            for _ in range(20):
+                time.sleep(0.25)
+                if subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True).returncode != 0:
+                    break
+    if not no_browser and not is_set_up():   # e.g. the files were copied here by another installer: finish the setup ourselves
+        try:
+            cmd_setup(say=lambda *a: None)
+        except Exception:
+            pass
+    token, busy = secrets.token_urlsafe(24), threading.Lock()
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def reply(self, code, body, ctype="application/json"):
+            data = body if isinstance(body, bytes) else json.dumps(body).encode()
+            self.send_response(code)
+            for k, v in (("Content-Type", ctype), ("Content-Length", str(len(data))), ("Cache-Control", "no-store"),
+                         ("X-Content-Type-Options", "nosniff")):
+                self.send_header(k, v)
+            self.end_headers()
+            self.wfile.write(data)
+
+        def local(self):   # only this machine's own page may talk to us (guards against other sites and DNS rebinding)
+            origin = self.headers.get("Origin")
+            return self.headers.get("Host") == here and origin in (None, f"http://{here}")
+
+        def authorised(self):
+            return self.local() and secrets.compare_digest(self.headers.get("X-Frame-Webapps-Token", ""), token)
+
+        def do_GET(self):
+            path = urllib.parse.urlparse(self.path).path
+            if not self.local():
+                return self.reply(403, {"error": "forbidden"})
+            if path == "/":
+                return self.reply(200, (MANAGER_DIR / "index.html").read_bytes(), "text/html; charset=utf-8")
+            if path.startswith("/icons/") and re.fullmatch(r"[a-z0-9-]+\.png", path[7:]) and (ICONS / path[7:]).is_file():
+                return self.reply(200, (ICONS / path[7:]).read_bytes(), "image/png")
+            if path == "/api/state" and self.authorised():
+                return self.reply(200, manager_state())
+            self.reply(404, {"error": "not found"})
+
+        def do_POST(self):
+            if not self.authorised():
+                return self.reply(403, {"error": "forbidden"})
+            try:
+                body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length", 0)), 10_000)) or b"{}")
+            except ValueError:
+                return self.reply(400, {"error": "bad request"})
+            path, lines = urllib.parse.urlparse(self.path).path, []
+            try:
+                if path == "/api/add":
+                    with busy:
+                        cmd_add(str(body.get("name") or ""), str(body.get("url", "")), color=str(body["color"]) if body.get("color") else None,
+                                say=lines.append, controller="native" if body.get("controller") == "native" else "extension")
+                    added = next((l.split('"')[1] for l in lines if l.startswith('Added "')), "the site")
+                    return self.reply(200, {"ok": True, "message": f"Added {added}. Open it from the Steam library."})
+                if path == "/api/remove":
+                    with busy:
+                        cmd_remove(str(body.get("name", "")), say=lines.append)
+                    return self.reply(200, {"ok": True, "message": f'Removed {body.get("name")}.'})
+                if path == "/api/restart-steam":
+                    # Runs outside Steam's own process group, so it survives Steam (and this app) stopping.
+                    subprocess.Popen(["systemd-run", "--user", "--collect", "--quiet", "systemctl", "--user", "restart", "steam.service"],
+                                     env={**os.environ, "XDG_RUNTIME_DIR": f"/run/user/{os.getuid()}"},
+                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    return self.reply(200, {"ok": True, "message": "Restarting Steam..."})
+            except Problem as e:   # drop command-line hints: this is the app, not the terminal
+                return self.reply(200, {"ok": False, "error": re.sub(r"\s+(Remove it first|See):\s+frame-webapp.*$", "", str(e))})
+            except Exception as e:
+                return self.reply(200, {"ok": False, "error": f"Something went wrong: {e}"})
+            self.reply(404, {"error": "not found"})
+
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
+    here = f"127.0.0.1:{server.server_address[1]}"
+    url = f"http://{here}/?t={token}"
+    if no_browser:
+        print(url, flush=True)
+        try:
+            server.serve_forever()
+        except KeyboardInterrupt:
+            pass
         return
-    ok, url = dialog("--inputbox", f"Web address for {name}:", "https://")
-    if not ok or not url:
-        return
-    lines = []
-    try:
-        cmd_add(name, url, say=lines.append)
-        dialog("--msgbox", "\n".join(lines[1:]))
-    except Problem as e:
-        dialog("--error", str(e))
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    subprocess.run([str(ROOT / "webapps/_chromium-webapp.sh"), MANAGER_CLASS, url],
+                   env={**os.environ, "WEBAPP_EXTENSIONS": "frame-gamepad"})
+    server.shutdown()
 
 
 def main():
     p = argparse.ArgumentParser(prog="frame-webapp", description="Turn any website into a Steam Frame app with controller support.")
     sub = p.add_subparsers(dest="cmd")
     a = sub.add_parser("add", help="add a website to the Steam library")
-    a.add_argument("name"); a.add_argument("url")
+    a.add_argument("name_and_url", nargs="+", metavar="[NAME] URL", help='the address, optionally preceded by a name')
+    a.add_argument("--controller", choices=["extension", "native"], default="extension",
+                   help="native: the site reads the controller itself (game streaming)")
     a.add_argument("--icon", help="use this image (PNG, JPEG, SVG, ICO) instead of the site's icon")
     a.add_argument("--color", help='artwork colour, e.g. "#e50914" (default: the site\'s theme colour)')
     sub.add_parser("list", help="list your web apps")
     g = sub.add_parser("art", help="regenerate a web app's artwork and icon")
     g.add_argument("name"); g.add_argument("--icon"); g.add_argument("--color")
+    g.add_argument("--search", help="use the first SteamGridDB entry for this name")
+    g.add_argument("--game-id", type=int, help="use this SteamGridDB entry (the number in its page address)")
+    g.add_argument("--generated", action="store_true", help="don't use SteamGridDB, keep the generated artwork")
+    k = sub.add_parser("key", help="save or remove your SteamGridDB API key")
+    k.add_argument("key", nargs="?"); k.add_argument("--remove", action="store_true")
     r = sub.add_parser("remove", help="remove a web app")
     r.add_argument("name"); r.add_argument("--keep-data", action="store_true", help="keep its browser profile (sign-in)")
-    sub.add_parser("gui", help="add a website using dialogs")
+    m = sub.add_parser("manager", help="open the Web Apps manager")
+    m.add_argument("--no-browser", action="store_true", help="only serve the page and print its address (for testing)")
+    m.add_argument("--port", type=int, default=0)
+    sub.add_parser("setup", help="(re)create the command, menu entry and background units")
+    sub.add_parser("setup-manager", help="add the Web Apps manager to the Steam library")
     sub.add_parser("update", help="update frame-webapps (git pull)")
     o = p.parse_args()
     try:
         if o.cmd == "add":
-            cmd_add(o.name, o.url, o.icon, o.color)
+            if len(o.name_and_url) > 2:
+                raise Problem('Usage: frame-webapp add ["Name"] https://example.com  (put names with spaces in quotes)')
+            cmd_add(o.name_and_url[0] if len(o.name_and_url) == 2 else "", o.name_and_url[-1], o.icon, o.color,
+                    controller=o.controller)
         elif o.cmd == "list":
             cmd_list()
         elif o.cmd == "art":
-            cmd_art(o.name, o.icon, o.color)
+            cmd_art(o.name, o.icon, o.color, sgdb="off" if o.generated else {"game_id": o.game_id} if o.game_id
+                    else {"search": o.search} if o.search else "auto")
+        elif o.cmd == "key":
+            cmd_key(o.key, o.remove)
         elif o.cmd == "remove":
             cmd_remove(o.name, o.keep_data)
-        elif o.cmd == "gui":
-            cmd_gui()
+        elif o.cmd == "manager":
+            cmd_manager(o.no_browser, o.port)
+        elif o.cmd == "setup":
+            cmd_setup()
+        elif o.cmd == "setup-manager":
+            cmd_setup_manager()
         elif o.cmd == "update":
             sys.exit(subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"]).returncode)
         else:
