@@ -20,9 +20,13 @@ import urllib.parse, urllib.request
 from html import unescape
 from pathlib import Path
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 ROOT = Path(os.path.realpath(__file__)).parent.parent
-APPS, ICONS = ROOT / "apps", ROOT / "icons"
+# "External" install: the files were put here by another tool (such as FramePort), which owns the manager's Steam entry
+# and may replace this folder when it updates. launcher/web-apps.c sets the variable; setup leaves the marker file.
+EXTERNAL = os.environ.get("FRAME_WEBAPPS_EXTERNAL") == "1" or (ROOT / ".external").exists()
+DATA = Path.home() / ".local/share/frame-webapps" if EXTERNAL else ROOT   # your apps and icons: outside a folder that may be replaced
+APPS, ICONS = DATA / "apps", DATA / "icons"
 SCRIPTS = ROOT / "scripts"
 DESKTOP_DIR = Path.home() / ".local/share/applications"
 CHROMIUM = "org.chromium.Chromium"
@@ -281,6 +285,8 @@ def suggest_name(url):
         title = re.sub(r"\s+", " ", unescape(m.group(1))).strip() if m else ""   # also folds thin and non-breaking spaces
         first = re.split(r"\s+[-|–—:·•]\s+|\s*[|–—·•]\s*", title)[0].strip()
         first = re.sub(r"[/\\|\"$`\x00-\x1f]", "", first)
+        if first.lower() in (host, "www." + host):   # the title is just the address ("globo.com"): use "Globo"
+            return fallback
         words, label = first.split(), re.sub(r"[^a-z0-9]", "", fallback.lower())
         for n in range(1, len(words) + 1):   # "Netflix Germany" on netflix.com -> "Netflix"; "Prime Video: ..." -> "Prime Video"
             if re.sub(r"[^a-z0-9]", "", "".join(words[:n]).lower()) == label:
@@ -387,9 +393,10 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
         f"# url: {url}\n"
         f"# class: {cls}\n"
         f"# controller: {controller}\n"
-        + ("" if controller == "native" else "WEBAPP_EXTENSIONS=frame-gamepad ") +
-        'exec "$(dirname "$(readlink -f "$0")")/../webapps/_chromium-webapp.sh" '
-        f'{cls} {shlex.quote(url)} "$@"\n')
+        + (f'exec "$HOME/.local/bin/frame-webapp" run {cls} {shlex.quote(url)}' + (" --native" if controller == "native" else "") + "\n"
+           if EXTERNAL else   # the tool's folder may move: go through the command, which setup keeps pointing at it
+           ("" if controller == "native" else "WEBAPP_EXTENSIONS=frame-gamepad ") +
+           'exec "$(dirname "$(readlink -f "$0")")/../webapps/_chromium-webapp.sh" ' + f'{cls} {shlex.quote(url)} "$@"\n'))
     launcher.chmod(0o755)
 
     try:
@@ -500,10 +507,26 @@ def is_set_up():
     return LOCK_UNIT.exists() and link.is_symlink() and os.path.realpath(link) == os.path.realpath(__file__)
 
 
+def cmd_run(cls, url, native=False):
+    """Start a web app (used by app launchers of an external install)."""
+    env = {**os.environ}
+    if not native:
+        env["WEBAPP_EXTENSIONS"] = "frame-gamepad"
+    os.execve("/bin/bash", ["bash", str(ROOT / "webapps/_chromium-webapp.sh"), cls, url], env)
+
+
 def cmd_setup(say=print):
     """Create the command, the background unit and the manager's Steam and menu entries. Safe to run again."""
     for d in (APPS, ICONS, ROOT / "logs"):
-        d.mkdir(exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True)
+    for f in [ROOT / "bin/frame-webapp", MANAGER_LAUNCHER, *ROOT.glob("webapps/*.sh"), *ROOT.glob("scripts/*.sh")]:
+        if f.is_file():   # an archive or a copy may have dropped the executable bits
+            f.chmod(f.stat().st_mode | 0o111)
+    if EXTERNAL:
+        try:
+            (ROOT / ".external").write_text("Installed by another tool (see launcher/web-apps.c). Apps and icons live in ~/.local/share/frame-webapps.\n")
+        except OSError:
+            pass
     bindir = Path.home() / ".local/bin"
     bindir.mkdir(parents=True, exist_ok=True)
     link = bindir / "frame-webapp"
@@ -524,7 +547,8 @@ def cmd_setup(say=print):
     old = DESKTOP_DIR / "frame-webapps-add.desktop"   # the earlier two-dialog entry
     if old.exists():
         old.unlink()
-    cmd_setup_manager(say)
+    if not EXTERNAL:   # an external installer made the manager's Steam entry itself
+        cmd_setup_manager(say)
 
 
 def cmd_setup_manager(say=print):
@@ -663,7 +687,7 @@ def cmd_manager(no_browser=False, port=0):
             pass
         return
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    subprocess.run([str(ROOT / "webapps/_chromium-webapp.sh"), MANAGER_CLASS, url],
+    subprocess.run(["/bin/bash", str(ROOT / "webapps/_chromium-webapp.sh"), MANAGER_CLASS, url],
                    env={**os.environ, "WEBAPP_EXTENSIONS": "frame-gamepad"})
     server.shutdown()
 
@@ -689,6 +713,8 @@ def main():
     sub.add_parser("setup", help="(re)create the command, menu entry and background units")
     sub.add_parser("setup-manager", help="add the Web Apps manager to the Steam library")
     sub.add_parser("update", help="update frame-webapps (git pull)")
+    x = sub.add_parser("run")   # internal: start a web app; used by app launchers
+    x.add_argument("cls"); x.add_argument("url"); x.add_argument("--native", action="store_true")
     o = p.parse_args()
     try:
         if o.cmd == "add":
@@ -708,7 +734,12 @@ def main():
             cmd_setup()
         elif o.cmd == "setup-manager":
             cmd_setup_manager()
+        elif o.cmd == "run":
+            cmd_run(o.cls, o.url, o.native)
         elif o.cmd == "update":
+            if not (ROOT / ".git").exists():
+                raise Problem("This copy wasn't installed with git (for example, it came from FramePort). "
+                              "Update it the same way you installed it.")
             subprocess.run(["git", "-C", str(ROOT), "config", "core.fileMode", "false"])   # a chmod must never block an update
             sys.exit(subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"]).returncode)
         else:

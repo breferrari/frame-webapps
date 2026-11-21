@@ -4,3 +4,6 @@ icons/
 logs/
 *.log
 __pycache__/
+
+# build output
+dist/
