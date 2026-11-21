@@ -5,7 +5,7 @@
 
 **Turn any website into an app on your Steam Frame, with a controller that works.**
 
-![The Steam library in the headset, showing Web Apps next to Twitch, Kick, Crunchyroll and YouTube tiles](docs/library.png)
+![The Steam library in the headset, showing Web Apps next to Twitch, Kick, Crunchyroll and YouTube tiles](docs/steam-library.png)
 
 ```bash
 frame-webapp add "Netflix" https://www.netflix.com
