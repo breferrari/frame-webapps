@@ -1,0 +1,14 @@
+{
+  "manifest_version": 3,
+  "name": "Frame Gamepad",
+  "version": "1.1.0",
+  "description": "Steam Frame controllers for web apps: reads the controller via the Gamepad API and scrolls, navigates and controls the video player. Local, no permissions, no network.",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["frame-gamepad.js"],
+      "all_frames": true,
+      "run_at": "document_idle"
+    }
+  ]
+}

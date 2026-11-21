@@ -1,0 +1,476 @@
+#!/usr/bin/env python3
+"""frame-webapp: turn any website into a Steam Frame app with controller support.
+
+  frame-webapp add "Name" https://example.com [--icon FILE] [--color "#rrggbb"]
+  frame-webapp list
+  frame-webapp art "Name" [--icon FILE] [--color "#rrggbb"]     regenerate the artwork and icon
+  frame-webapp remove "Name" [--keep-data]
+  frame-webapp gui          ask for the name and address in dialogs (used by the "Add Web App" menu entry)
+  frame-webapp update       update frame-webapps itself (git pull)
+
+"add" creates a launcher in apps/, adds it to your Steam library, generates artwork from the site's own icon and
+colour, and sets up the window icon. Open the app from the Steam library. See docs/web-apps.md for how it works.
+"""
+import argparse, colorsys, json, os, re, shlex, shutil, struct, subprocess, sys, tempfile, time, zlib
+import urllib.parse, urllib.request
+from html import unescape
+from pathlib import Path
+
+ROOT = Path(os.path.realpath(__file__)).parent.parent
+APPS, ICONS, PENDING = ROOT / "apps", ROOT / "icons", ROOT / "pending"
+SCRIPTS = ROOT / "scripts"
+DESKTOP_DIR = Path.home() / ".local/share/applications"
+CHROMIUM = "org.chromium.Chromium"
+PROFILES = Path.home() / ".var/app" / CHROMIUM / "config"
+STEAM_USERDATA = Path.home() / ".local/share/Steam/userdata"
+HOOK = Path.home() / ".config/systemd/user/steam.service.d/frame-webapps-pending.conf"
+UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
+
+class Problem(Exception):
+    """An error to show the user as-is."""
+
+
+# ---------------------------------------------------------------- Steam shortcuts
+def shortcuts():
+    out = subprocess.run([sys.executable, "-I", str(SCRIPTS / "steam-shortcuts.py"), "list"],
+                         capture_output=True, text=True).stdout
+    rows = []
+    for line in out.splitlines():
+        parts = (line.split("\t") + ["", "", "", ""])[:4]
+        if parts[0].isdigit():
+            rows.append({"appid": int(parts[0]), "name": parts[1], "exe": parts[2].strip('"'), "icon": parts[3]})
+    return rows
+
+
+def steam_running():
+    return subprocess.run(["pgrep", "-x", "steam"], capture_output=True).returncode == 0
+
+
+def queue(filename, line):
+    PENDING.mkdir(exist_ok=True)
+    path = PENDING / filename
+    if path.exists() and line in path.read_text().splitlines():
+        return
+    with open(path, "a") as f:
+        f.write(line + "\n")
+
+
+# ---------------------------------------------------------------- apps on disk
+def read_app(path):
+    info = {"name": path.name, "path": path, "url": "", "class": ""}
+    for line in path.read_text(errors="replace").splitlines():
+        m = re.match(r"# (url|class): (.*)", line)
+        if m:
+            info[m.group(1)] = m.group(2).strip()
+    return info
+
+
+def apps():
+    return [read_app(p) for p in sorted(APPS.iterdir())] if APPS.is_dir() else []
+
+
+def slug_of(name):
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-") or f"app-{zlib.crc32(name.encode()):08x}"
+
+
+def class_of(name):
+    words = re.findall(r"[A-Za-z0-9]+", name)
+    base = "".join(w[:1].upper() + w[1:] for w in words) or f"App{zlib.crc32(name.encode()):08x}"
+    return base + "WebApp"
+
+
+# ---------------------------------------------------------------- site icon and colour
+def http_get(url, limit=3_000_000):
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*", "Accept-Language": "en"})
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return r.read(limit + 1)[:limit], r.geturl()
+
+
+def attrs(tag):
+    return {k.lower(): unescape(v.strip("\"'")) for k, v in
+            re.findall(r"([\w:-]+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", tag)}
+
+
+def biggest(sizes, default):
+    nums = [int(n) for n in re.findall(r"(\d+)x\d+", sizes or "")]
+    return max(nums) if nums else default
+
+
+def png_size(data):
+    return struct.unpack(">I", data[16:20])[0] if data[:4] == b"\x89PNG" and len(data) > 24 else 0
+
+
+def to_image(data):
+    """Return (bytes, ext, width) for a PNG/JPEG we can use, converting SVG and ICO; None otherwise."""
+    if data[:4] == b"\x89PNG":
+        return data, "png", png_size(data)
+    if data[:2] == b"\xff\xd8":
+        return data, "jpg", 180
+    if data[:4] == b"\x00\x00\x01\x00":   # ICO: use the largest entry that is stored as PNG
+        best = None
+        for i in range(struct.unpack_from("<H", data, 4)[0]):
+            size, offset = struct.unpack_from("<II", data, 6 + 16 * i + 8)
+            chunk = data[offset:offset + size]
+            if chunk[:4] == b"\x89PNG" and (best is None or png_size(chunk) > png_size(best)):
+                best = chunk
+        return (best, "png", png_size(best)) if best else None
+    if b"<svg" in data[:2000].lower():     # SVG: render it (in its own folder, it is untrusted input)
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = Path(d) / "icon.svg", Path(d) / "icon.png"
+            src.write_bytes(data)
+            r = subprocess.run(["rsvg-convert", "-w", "512", "-h", "512", "-o", str(dst), str(src)], capture_output=True)
+            if r.returncode == 0 and dst.exists():
+                png = dst.read_bytes()
+                return png, "png", png_size(png)
+    return None
+
+
+def site_info(url):
+    """Best-effort: (image tuple or None, theme colour or None). Never raises."""
+    candidates, color = [], None
+    try:
+        html, final = http_get(url, 1_500_000)
+        html = html.decode("utf-8", "replace")
+        for tag in re.findall(r"<(?:link|meta)\b[^>]*>", html, re.I):
+            a = attrs(tag)
+            rel = a.get("rel", "").lower()
+            if tag[1:5].lower() == "meta":
+                if a.get("name", "").lower() == "theme-color" and not color:
+                    color = a.get("content")
+            elif "manifest" in rel and a.get("href"):
+                try:
+                    murl = urllib.parse.urljoin(final, a["href"])
+                    manifest = json.loads(http_get(murl, 500_000)[0].decode("utf-8", "replace"))
+                    color = color or manifest.get("theme_color")
+                    for icon in manifest.get("icons", []):
+                        if icon.get("src"):
+                            candidates.append((biggest(icon.get("sizes"), 192) + 1, urllib.parse.urljoin(murl, icon["src"])))
+                except Exception:
+                    pass
+            elif a.get("href") and "icon" in rel and "mask" not in rel:
+                default = 180 if "apple" in rel else (400 if a["href"].lower().split("?")[0].endswith(".svg") else 32)
+                candidates.append((biggest(a.get("sizes"), default), urllib.parse.urljoin(final, a["href"])))
+        base = final
+    except Exception:
+        base = url
+    candidates += [(100, urllib.parse.urljoin(base, "/apple-touch-icon.png")), (16, urllib.parse.urljoin(base, "/favicon.ico"))]
+    best, seen = None, set()
+    for _, icon_url in sorted(candidates, key=lambda c: -c[0])[:8]:
+        if icon_url in seen:
+            continue
+        seen.add(icon_url)
+        try:
+            image = to_image(http_get(icon_url)[0])
+        except Exception:
+            image = None
+        if image and (best is None or image[2] > best[2]):
+            best = image
+            if best[2] >= 128:
+                break
+    if not (isinstance(color, str) and re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", color.strip())):
+        color = None
+    return best, color.strip() if color else None
+
+
+def icon_color(image):
+    """The icon's dominant colourful colour as #rrggbb, or None. rsvg-convert scales the icon down to a small
+    plain RGBA PNG, which is simple enough to decode here without an imaging library."""
+    try:
+        import base64
+        mime = "image/png" if image[1] == "png" else "image/jpeg"
+        n = 24
+        with tempfile.TemporaryDirectory() as d:
+            src, dst = Path(d) / "i.svg", Path(d) / "o.png"
+            src.write_text(f"<svg xmlns='http://www.w3.org/2000/svg' width='{n}' height='{n}'><image width='{n}' height='{n}' "
+                           f"href='data:{mime};base64,{base64.b64encode(image[0]).decode()}'/></svg>")
+            subprocess.run(["rsvg-convert", "-o", str(dst), str(src)], check=True, capture_output=True)
+            png = dst.read_bytes()
+        if png[24] != 8 or png[25] not in (2, 6):   # expect 8-bit RGB (opaque icon) or RGBA
+            return None
+        bpp = 4 if png[25] == 6 else 3
+        pos, idat = 8, b""
+        while pos < len(png):
+            length, kind = struct.unpack(">I4s", png[pos:pos + 8])
+            if kind == b"IDAT":
+                idat += png[pos + 8:pos + 8 + length]
+            pos += 12 + length
+        raw, stride, prev, counts = zlib.decompress(idat), n * bpp, bytes(n * bpp), {}
+        for y in range(n):
+            f, line = raw[y * (stride + 1)], bytearray(raw[y * (stride + 1) + 1:(y + 1) * (stride + 1)])
+            for i in range(stride):   # undo the PNG row filter
+                a = line[i - bpp] if i >= bpp else 0
+                b, c = prev[i], (prev[i - bpp] if i >= bpp else 0)
+                if f == 1: line[i] = (line[i] + a) & 255
+                elif f == 2: line[i] = (line[i] + b) & 255
+                elif f == 3: line[i] = (line[i] + (a + b) // 2) & 255
+                elif f == 4:
+                    pa, pb, pc = abs(b - c), abs(a - c), abs(a + b - 2 * c)
+                    line[i] = (line[i] + (a if pa <= pb and pa <= pc else b if pb <= pc else c)) & 255
+            prev = bytes(line)
+            for x in range(n):
+                r, g, bl = line[x * bpp:x * bpp + 3]
+                if bpp == 4 and line[x * bpp + 3] < 128:
+                    continue   # transparent
+                h, l, s = colorsys.rgb_to_hls(r / 255, g / 255, bl / 255)
+                if s < 0.25 or l < 0.12 or l > 0.9:
+                    continue   # greys, near-black and near-white don't make a brand colour
+                key = (r >> 4, g >> 4, bl >> 4)
+                counts[key] = counts.get(key, 0) + 0.3 + s
+        if not counts:
+            return None
+        r, g, bl = max(counts, key=counts.get)
+        return "#%02x%02x%02x" % (r * 16 + 8, g * 16 + 8, bl * 16 + 8)
+    except Exception:
+        return None
+
+
+def palette(color, name):
+    """Three gradient stops (light, base, dark) from the site's colour, or from a hue picked by the name."""
+    if color:
+        c = color.lstrip("#")
+        c = "".join(ch * 2 for ch in c) if len(c) == 3 else c
+        h, l, s = colorsys.rgb_to_hls(*(int(c[i:i + 2], 16) / 255 for i in (0, 2, 4)))
+    else:
+        h, l, s = (zlib.crc32(name.encode()) % 360) / 360, 0.42, 0.6
+    l = min(max(l, 0.22), 0.5)   # white text has to stay readable
+    hexof = lambda hh, ll, ss: "#%02x%02x%02x" % tuple(round(v * 255) for v in colorsys.hls_to_rgb(hh, ll, ss))
+    return ",".join([hexof(h, min(l + 0.18, 0.66), s), hexof(h, l, s), hexof(h, 0.07, s * 0.8)])
+
+
+def make_art(name, shortcut_name, appid, host, image, color, say):
+    """Render the library artwork and the icon. Returns the icon path (it may not exist if rendering failed)."""
+    slug = slug_of(name)
+    ICONS.mkdir(exist_ok=True)
+    art_icon = None
+    if image:
+        art_icon = ICONS / f"{slug}-site.{image[1]}"
+        art_icon.write_bytes(image[0])
+        color = color or icon_color(image)
+    art = [sys.executable, "-I", str(SCRIPTS / "steam-art.py"), shortcut_name, "--appid", str(appid), "--label", name,
+           "--subtitle", re.sub(r"^www\.", "", host).upper(), "--colors", palette(color, name)]
+    if art_icon:
+        art += ["--icon", str(art_icon)]
+    r = subprocess.run(art, capture_output=True, text=True)
+    if r.returncode != 0:
+        say("Couldn't generate artwork: " + (r.stderr.strip().splitlines() or ["unknown error"])[-1])
+    # Icon for the Steam shortcut and the window: the site's own icon if it's a good PNG, else our generated tile.
+    final_icon = ICONS / f"{slug}.png"
+    tile = next((d / "config/grid" / f"{appid}_icon.png" for d in STEAM_USERDATA.iterdir()
+                 if (d / "config/grid" / f"{appid}_icon.png").exists()), None) if STEAM_USERDATA.is_dir() else None
+    if image and image[1] == "png" and image[2] >= 128:
+        final_icon.write_bytes(image[0])
+    elif tile:
+        shutil.copy(tile, final_icon)
+    if art_icon:
+        art_icon.unlink()
+    if final_icon.exists():
+        queue("shortcut-icons", f"{shortcut_name}|{final_icon}")
+    return final_icon
+
+
+def load_image(icon):
+    image = to_image(Path(icon).read_bytes()) if Path(icon).is_file() else None
+    if not image:
+        raise Problem(f"The icon must be an existing PNG, JPEG, SVG or ICO file: {icon}")
+    return image
+
+
+# ---------------------------------------------------------------- commands
+def cmd_add(name, url, icon=None, color=None, say=print):
+    name = name.strip()
+    if not name or len(name) > 40 or re.search(r"[/\\|\"$`\x00-\x1f]", name) or name.startswith((".", "_", "-")):
+        raise Problem("Pick a name of up to 40 characters, without / \\ | \" $ ` and not starting with . _ or -")
+    url = url.strip()
+    if "://" not in url:
+        url = "https://" + url
+    parsed = urllib.parse.urlparse(url)
+    if parsed.scheme not in ("http", "https") or "." not in parsed.netloc or re.search(r"[\s\"'`$\\<>]", url):
+        raise Problem(f"That doesn't look like a web address: {url}")
+    for tool in ("flatpak", "rsvg-convert", "steamos-add-to-steam"):
+        if not shutil.which(tool):
+            raise Problem(f"Missing program: {tool}")
+    if subprocess.run(["flatpak", "info", CHROMIUM], capture_output=True).returncode != 0:
+        raise Problem(f"Chromium isn't installed. Install it with:  flatpak install flathub {CHROMIUM}")
+    if not steam_running():
+        raise Problem("Steam isn't running. Start Steam, then try again.")
+    launcher, cls, slug = APPS / name, class_of(name), slug_of(name)
+    existing = apps()
+    if launcher.exists() or any(a["name"].lower() == name.lower() for a in existing):
+        raise Problem(f'"{name}" already exists. Remove it first:  frame-webapp remove "{name}"')
+    if any(a["class"] == cls for a in existing) or (DESKTOP_DIR / f"frame-webapp-{slug}.desktop").exists():
+        raise Problem(f'The name "{name}" is too close to an existing web app. Pick a different name.')
+    if icon:
+        load_image(icon)
+    if color and not re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", color):
+        raise Problem("--color must look like #rrggbb")
+
+    say(f"Looking up {parsed.netloc} ...")
+    image, site_color = (None, None) if (icon and color) else site_info(url)
+    if icon:
+        image = load_image(icon)
+    APPS.mkdir(exist_ok=True)
+
+    launcher.write_text(
+        "#!/bin/bash\n"
+        f'# Web app "{name}", generated by frame-webapp. Remove it with: frame-webapp remove "{name}"\n'
+        f"# url: {url}\n"
+        f"# class: {cls}\n"
+        'WEBAPP_EXTENSIONS=frame-gamepad exec "$(dirname "$(readlink -f "$0")")/../webapps/_chromium-webapp.sh" '
+        f'{cls} {shlex.quote(url)} "$@"\n')
+    launcher.chmod(0o755)
+
+    before = {s["appid"] for s in shortcuts()}
+    subprocess.run(["steamos-add-to-steam", str(launcher)], capture_output=True)
+    new = None
+    for _ in range(20):
+        time.sleep(0.5)
+        fresh = [s for s in shortcuts() if s["appid"] not in before]
+        new = next((s for s in fresh if s["exe"] == str(launcher)), None)
+        if new:
+            break
+    if not new:
+        launcher.unlink()
+        raise Problem("Steam didn't add the shortcut. Check that Steam is running (not just SteamVR) and try again.")
+    appid = new["appid"]
+
+    final_icon = make_art(name, new["name"], appid, parsed.netloc, image, color or site_color, say)
+
+    DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
+    (DESKTOP_DIR / f"frame-webapp-{slug}.desktop").write_text(
+        "[Desktop Entry]\nType=Application\n"
+        f"Name={name}\nComment={name} web app (frame-webapps). Launches through Steam for controller support.\n"
+        f'Exec="{ROOT}/webapps/launch-via-steam.sh" {appid}\n'
+        f"Icon={final_icon if final_icon.exists() else 'applications-internet'}\n"
+        f"StartupWMClass={cls}\nCategories=Network;\nTerminal=false\n")
+    subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
+
+    say(f'Added "{name}" to your Steam library.')
+    say("Open it from the Steam library (not the \"+\" menu) to get theater mode and controller support.")
+    say("Its artwork and icon show up after the next Steam restart." +
+        ("" if HOOK.exists() else " (The icon needs the restart hook: run install.sh.)"))
+    return appid
+
+
+def cmd_art(name, icon=None, color=None, say=print):
+    app = next((a for a in apps() if a["name"].lower() == name.strip().lower()), None)
+    if not app:
+        raise Problem(f'No web app called "{name}". See:  frame-webapp list')
+    s = next((s for s in shortcuts() if s["exe"] == str(app["path"])), None)
+    if not s:
+        raise Problem(f'"{app["name"]}" isn\'t in the Steam library.')
+    if color and not re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", color):
+        raise Problem("--color must look like #rrggbb")
+    image, site_color = (None, None) if (icon and color) else site_info(app["url"])
+    if icon:
+        image = load_image(icon)
+    make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say)
+    say(f'New artwork for "{app["name"]}" is ready. It shows up after the next Steam restart.')
+
+
+def cmd_list():
+    by_exe = {s["exe"]: s for s in shortcuts()}
+    rows = apps()
+    if not rows:
+        print('No web apps yet. Add one:  frame-webapp add "Name" https://example.com')
+        return
+    width = max(len(a["name"]) for a in rows)
+    for a in rows:
+        s = by_exe.get(str(a["path"]))
+        state = f"in Steam (appid {s['appid']})" if s else "not in Steam"
+        print(f"{a['name']:<{width}}  {a['url']:<40}  {state}")
+
+
+def cmd_remove(name, keep_data=False, say=print):
+    app = next((a for a in apps() if a["name"].lower() == name.strip().lower()), None)
+    if not app:
+        raise Problem(f'No web app called "{name}". See:  frame-webapp list')
+    cls, slug, launcher = app["class"] or class_of(app["name"]), slug_of(app["name"]), app["path"]
+    profile = PROFILES / f"webapp-{cls}"
+    if subprocess.run(["pgrep", "-f", "--", f"--user-data-dir={profile}( |$)"], capture_output=True).returncode == 0:
+        raise Problem(f'"{app["name"]}" is running. Close it first.')
+    s = next((s for s in shortcuts() if s["exe"] == str(launcher)), None)
+    if s and STEAM_USERDATA.is_dir():
+        for grid in STEAM_USERDATA.glob("*/config/grid"):
+            for f in grid.glob(f"{s['appid']}*"):
+                f.unlink()
+    for f in (launcher, ICONS / f"{slug}.png", DESKTOP_DIR / f"frame-webapp-{slug}.desktop"):
+        if f.exists():
+            f.unlink()
+    if not keep_data and profile.is_dir():
+        shutil.rmtree(profile)
+    subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
+    say(f'Removed "{app["name"]}"' + (" (kept its browser data and sign-in)." if keep_data else " and its browser data."))
+    if s:
+        queue("shortcut-removals", f"{launcher}|")
+        say("Its Steam library entry disappears at the next Steam restart" +
+            (". " if HOOK.exists() else " once the restart hook is installed (run install.sh). ") +
+            "To remove it right now: select it in Steam, then Manage > Remove non-Steam game.")
+
+
+def dialog(*args):
+    tool = shutil.which("kdialog")
+    if tool:
+        r = subprocess.run([tool, "--title", "Add Web App", *args], capture_output=True, text=True)
+        return r.returncode == 0, r.stdout.strip()
+    tool = shutil.which("zenity")
+    if not tool:
+        raise Problem("No dialog program found (kdialog or zenity). Use:  frame-webapp add \"Name\" https://example.com")
+    kind, text = args[0], args[1]
+    z = {"--inputbox": ["--entry", "--text", text], "--msgbox": ["--info", "--text", text],
+         "--error": ["--error", "--text", text]}[kind]
+    r = subprocess.run([tool, "--title", "Add Web App", *z], capture_output=True, text=True)
+    return r.returncode == 0, r.stdout.strip()
+
+
+def cmd_gui():
+    ok, name = dialog("--inputbox", "Name of the app, as it should appear in Steam:")
+    if not ok or not name:
+        return
+    ok, url = dialog("--inputbox", f"Web address for {name}:", "https://")
+    if not ok or not url:
+        return
+    lines = []
+    try:
+        cmd_add(name, url, say=lines.append)
+        dialog("--msgbox", "\n".join(lines[1:]))
+    except Problem as e:
+        dialog("--error", str(e))
+
+
+def main():
+    p = argparse.ArgumentParser(prog="frame-webapp", description="Turn any website into a Steam Frame app with controller support.")
+    sub = p.add_subparsers(dest="cmd")
+    a = sub.add_parser("add", help="add a website to the Steam library")
+    a.add_argument("name"); a.add_argument("url")
+    a.add_argument("--icon", help="use this image (PNG, JPEG, SVG, ICO) instead of the site's icon")
+    a.add_argument("--color", help='artwork colour, e.g. "#e50914" (default: the site\'s theme colour)')
+    sub.add_parser("list", help="list your web apps")
+    g = sub.add_parser("art", help="regenerate a web app's artwork and icon")
+    g.add_argument("name"); g.add_argument("--icon"); g.add_argument("--color")
+    r = sub.add_parser("remove", help="remove a web app")
+    r.add_argument("name"); r.add_argument("--keep-data", action="store_true", help="keep its browser profile (sign-in)")
+    sub.add_parser("gui", help="add a website using dialogs")
+    sub.add_parser("update", help="update frame-webapps (git pull)")
+    o = p.parse_args()
+    try:
+        if o.cmd == "add":
+            cmd_add(o.name, o.url, o.icon, o.color)
+        elif o.cmd == "list":
+            cmd_list()
+        elif o.cmd == "art":
+            cmd_art(o.name, o.icon, o.color)
+        elif o.cmd == "remove":
+            cmd_remove(o.name, o.keep_data)
+        elif o.cmd == "gui":
+            cmd_gui()
+        elif o.cmd == "update":
+            sys.exit(subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"]).returncode)
+        else:
+            p.print_help()
+    except Problem as e:
+        sys.exit(f"frame-webapp: {e}")
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,12 @@
+# frame-webapps: clear stale Flatpak Chromium profile locks at each session start (see the script for why).
+# install.sh fills in the install folder below.
+[Unit]
+Description=frame-webapps: clear stale Chromium profile locks
+Before=steam.service
+
+[Service]
+Type=oneshot
+ExecStart=-@ROOT@/scripts/chromium-stale-lock-cleanup.sh
+
+[Install]
+WantedBy=gamescope-session.target
