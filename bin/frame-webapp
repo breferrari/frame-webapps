@@ -20,6 +20,7 @@ import urllib.parse, urllib.request
 from html import unescape
 from pathlib import Path
 
+VERSION = "0.1.0"
 ROOT = Path(os.path.realpath(__file__)).parent.parent
 APPS, ICONS = ROOT / "apps", ROOT / "icons"
 SCRIPTS = ROOT / "scripts"
@@ -669,6 +670,7 @@ def cmd_manager(no_browser=False, port=0):
 
 def main():
     p = argparse.ArgumentParser(prog="frame-webapp", description="Turn any website into a Steam Frame app with controller support.")
+    p.add_argument("--version", action="version", version=f"frame-webapp {VERSION}")
     sub = p.add_subparsers(dest="cmd")
     a = sub.add_parser("add", help="add a website to the Steam library")
     a.add_argument("name_and_url", nargs="+", metavar="[NAME] URL", help='the address, optionally preceded by a name')
