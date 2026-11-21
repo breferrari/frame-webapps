@@ -63,13 +63,10 @@ and the pointing stick scrolls (laser scroll arrives as small wheel events, whic
    usable icon (PNG, JPEG, SVG or ICO). With no theme colour it takes the icon's dominant colour. Sites that block
    automated requests get a plain tile; pass `--icon` and `--color` to choose your own.
 3. **Adds it to Steam, live:** `SteamClient.Apps.AddShortcut(...)` through Steam's local interface (see below), which
-   returns the new appid. Fallback: `steamos-add-to-steam apps/Netflix`, which works while Steam runs because it touches
-   `/tmp/addnonsteamgamefile` first (a raw `steam://addnonsteamgame/…` request doesn't stick); the appid is then read
-   back from `shortcuts.vdf`.
+   returns the new appid.
 4. **Artwork:** `scripts/steam-art.py` renders cover, wide, hero, logo and icon into `userdata/<id>/config/grid/`, and
    `SetCustomArtworkForApp` makes the running Steam show them.
-5. **Shortcut icon:** `SetShortcutIcon`, live. Fallback: queued in `pending/shortcut-icons` for the pre-start hook,
-   because Steam rewrites `shortcuts.vdf` when it exits.
+5. **Shortcut icon:** `SetShortcutIcon`, live.
 6. **Desktop entry:** `~/.local/share/applications/frame-webapp-netflix.desktop` with `StartupWMClass=NetflixWebApp`
    (window icon) and `Exec=…/launch-via-steam.sh <appid>`.
 
@@ -80,7 +77,7 @@ virtual Xbox pad itself through the Gamepad API (still thanks to the gamepad lay
 game streaming sites expect. The navigation extension would otherwise scroll and press "back" during play.
 
 `frame-webapp remove` deletes the launcher, desktop entry, icon, artwork and (unless `--keep-data`) the Chromium
-profile, and removes the shortcut with `RemoveShortcut` (fallback: queued for the next Steam start).
+profile, and removes the shortcut with `RemoveShortcut`. If the app is open, it is closed first.
 
 ### Steam's local interface
 
@@ -88,11 +85,12 @@ Steam's interface is a web page, and on the Frame its debugging port listens on 
 connects to the `SharedJSContext` page (Chrome DevTools protocol over a WebSocket, standard library only) and calls the
 functions the interface itself uses: `SteamClient.Apps.AddShortcut`, `RemoveShortcut`, `SetShortcutIcon` and
 `SetCustomArtworkForApp(appid, base64, "png"|"jpg", type)` with type 0 = cover, 1 = hero, 2 = logo, 3 = wide.
-That is why nothing needs a Steam restart. If the port isn't reachable, every step falls back to the file-based route
-above, and the changes show after the next Steam start.
+That is why nothing needs a Steam restart. Steam has to be running: if the port isn't reachable, `add` and `remove`
+stop with a message and change nothing.
 
-One quirk seen once: on a shortcut that had been added through the fallback route, `SetShortcutIcon` stored the path
-but Steam never loaded the image. Removing the shortcut and adding it again through `AddShortcut` fixed it.
+Editing Steam's files instead doesn't work while Steam runs: it rewrites `shortcuts.vdf` and its controller configs
+from memory when it exits. `steamos-add-to-steam` can add a shortcut to a running Steam, but artwork and icons would
+then only show after a restart, and `SetShortcutIcon` did not load the image on a shortcut added that way.
 
 ## The Web Apps manager
 
@@ -103,8 +101,7 @@ with the D-pad and A like any other web app. It calls the same code as `add` and
 - The server binds to `127.0.0.1` on a free port and stops when the window closes.
 - Every API request needs a token created at launch (passed to the page in its address) and the right `Host` and
   `Origin`, so other pages in a browser and other devices on the network can't use it.
-- If a change is waiting in the fallback queue, the page says that it will show the next time Steam starts.
-- On first launch it runs `frame-webapp setup` if the command or the background units are missing, so any way of
+- On first launch it runs `frame-webapp setup` if the command or the background unit is missing, so any way of
   getting the files onto the Frame ends in the same state.
 - `manager/catalogue.json` lists the known sites (name, address, colour, and `"controller": "native"` where needed).
 
@@ -118,7 +115,7 @@ with the D-pad and A like any other web app. It calls the same code as `add` and
 | "Profile error occurred" ×N | `flatpak ps` | Two Chromiums on one profile. Use per-app profiles; close strays |
 | "Profile in use" after a restart | `…/webapp-<Class>/SingletonLock` | Stale lock. Cleared automatically at session start and app start |
 | Video won't play | Chromium log ("robustness", EME errors) | Widevine. Check `…/webapp-<Class>/WidevineCdm/latest-component-updated-widevine-cdm` points into the profile |
-| Black square / "?" icon | `scripts/steam-shortcuts.py list` | Empty `icon` field, or a window that doesn't match its `.desktop` `StartupWMClass` |
+| Black square / "?" icon | `scripts/steam-shortcuts.py` | Empty `icon` field, or a window that doesn't match its `.desktop` `StartupWMClass` |
 
 ## What did NOT work (and why), so nobody repeats it
 

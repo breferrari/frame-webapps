@@ -4,7 +4,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/breferrari/frame-webapps/main/install.sh | bash
 #
 # Installs into ~/.local/share/frame-webapps (nothing system-wide, no sudo), then runs `frame-webapp setup`, which adds
-# the `frame-webapp` command, the "Web Apps" manager (Steam library and desktop menu) and two small systemd user units
+# the `frame-webapp` command, the "Web Apps" manager (Steam library and desktop menu) and one small systemd user unit
 # (see README: "What install.sh changes"). Nothing is restarted.
 #   FRAME_WEBAPPS_HOME=/path   install somewhere else
 #   FRAME_WEBAPPS_SRC=/path    copy from a local checkout instead of cloning (for development)
@@ -13,7 +13,7 @@ set -euo pipefail
 REPO="${FRAME_WEBAPPS_REPO:-https://github.com/breferrari/frame-webapps}"
 DEST="${FRAME_WEBAPPS_HOME:-$HOME/.local/share/frame-webapps}"
 
-for tool in git flatpak python3 rsvg-convert steamos-add-to-steam; do
+for tool in git flatpak python3 rsvg-convert; do
   command -v "$tool" >/dev/null || { echo "Missing program: $tool. frame-webapps is made for SteamOS on the Steam Frame."; exit 1; }
 done
 flatpak info org.chromium.Chromium >/dev/null 2>&1 ||

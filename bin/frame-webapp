@@ -21,13 +21,14 @@ from html import unescape
 from pathlib import Path
 
 ROOT = Path(os.path.realpath(__file__)).parent.parent
-APPS, ICONS, PENDING = ROOT / "apps", ROOT / "icons", ROOT / "pending"
+APPS, ICONS = ROOT / "apps", ROOT / "icons"
 SCRIPTS = ROOT / "scripts"
 DESKTOP_DIR = Path.home() / ".local/share/applications"
 CHROMIUM = "org.chromium.Chromium"
 PROFILES = Path.home() / ".var/app" / CHROMIUM / "config"
 STEAM_USERDATA = Path.home() / ".local/share/Steam/userdata"
-HOOK = Path.home() / ".config/systemd/user/steam.service.d/frame-webapps-pending.conf"
+LOCK_UNIT = Path.home() / ".config/systemd/user/frame-webapps-chromium-lock.service"
+STEAM_UNREACHABLE = "Steam isn't reachable. Make sure Steam is running, then try again."
 MANAGER_DIR = ROOT / "manager"
 MANAGER_LAUNCHER = MANAGER_DIR / "Web Apps"      # the filename is the name shown in Steam
 MANAGER_CLASS = "FrameWebAppsManager"
@@ -40,7 +41,7 @@ class Problem(Exception):
 
 # ---------------------------------------------------------------- Steam shortcuts
 def shortcuts():
-    out = subprocess.run([sys.executable, "-I", str(SCRIPTS / "steam-shortcuts.py"), "list"],
+    out = subprocess.run([sys.executable, "-I", str(SCRIPTS / "steam-shortcuts.py")],
                          capture_output=True, text=True).stdout
     rows = []
     for line in out.splitlines():
@@ -57,19 +58,6 @@ def shortcut_for(launcher, rows=None):
     return next((s for s in (shortcuts() if rows is None else rows) if s["real"] == real), None)
 
 
-def steam_running():
-    return subprocess.run(["pgrep", "-x", "steam"], capture_output=True).returncode == 0
-
-
-def queue(filename, line):
-    PENDING.mkdir(exist_ok=True)
-    path = PENDING / filename
-    if path.exists() and line in path.read_text().splitlines():
-        return
-    with open(path, "a") as f:
-        f.write(line + "\n")
-
-
 def steam_live():
     """The module that talks to the running Steam client (scripts/steamcef.py)."""
     if str(SCRIPTS) not in sys.path:
@@ -78,9 +66,12 @@ def steam_live():
     return steamcef
 
 
-def show_in_steam(appid, shortcut_name, icon=None):
-    """Make the running Steam show the app's artwork and icon now. Returns True if it did.
-    Otherwise the files are in place for the next Steam start, and the icon is queued for it."""
+def steam_reachable():
+    return steam_live().available()
+
+
+def show_in_steam(appid, icon=None):
+    """Make the running Steam show the app's artwork and icon now."""
     cef = steam_live()
     grids = list(STEAM_USERDATA.glob("*/config/grid")) if STEAM_USERDATA.is_dir() else []
     try:
@@ -90,34 +81,23 @@ def show_in_steam(appid, shortcut_name, icon=None):
                 cef.set_artwork(appid, image, kind)
         if icon and Path(icon).exists():
             cef.set_icon(appid, icon)
-        return True
     except cef.SteamUnavailable:
-        if icon and Path(icon).exists():
-            queue("shortcut-icons", f"{shortcut_name}|{icon}")
-        return False
+        raise Problem(STEAM_UNREACHABLE) from None
 
 
 def add_to_steam(launcher):
-    """Add a launcher to the Steam library while Steam runs, and return the new shortcut (or None)."""
-    before = {s["appid"] for s in shortcuts()}
+    """Add a launcher to the library of the running Steam and return the new shortcut."""
     cef = steam_live()
     try:   # Steam's own "add shortcut" function, through its local interface
         appid = cef.add_shortcut(Path(launcher).name, launcher)
-        for _ in range(12):
-            new = next((s for s in shortcuts() if s["appid"] == appid), None)
-            if new:
-                return new
-            time.sleep(0.25)
-        return {"appid": appid, "name": Path(launcher).name, "exe": str(launcher), "real": os.path.realpath(launcher), "icon": ""}
     except cef.SteamUnavailable:
-        pass
-    subprocess.run(["steamos-add-to-steam", str(launcher)], capture_output=True)
-    for _ in range(20):
-        time.sleep(0.5)
-        new = next((s for s in shortcuts() if s["appid"] not in before and s["exe"] == str(launcher)), None)
+        raise Problem(STEAM_UNREACHABLE) from None
+    for _ in range(12):   # Steam writes shortcuts.vdf a moment later
+        new = next((s for s in shortcuts() if s["appid"] == appid), None)
         if new:
             return new
-    return None
+        time.sleep(0.25)
+    return {"appid": appid, "name": Path(launcher).name, "exe": str(launcher), "real": os.path.realpath(launcher), "icon": ""}
 
 
 # ---------------------------------------------------------------- apps on disk
@@ -325,7 +305,7 @@ def palette(color, name):
 
 
 def make_art(name, shortcut_name, appid, host, image, color, say):
-    """Render the library artwork and the icon, and show them in Steam. Returns (icon path, shown right away?)."""
+    """Render the library artwork and the icon, and show them in the running Steam. Returns the icon path."""
     slug = slug_of(name)
     ICONS.mkdir(exist_ok=True)
     art_icon = None
@@ -352,7 +332,8 @@ def make_art(name, shortcut_name, appid, host, image, color, say):
         shutil.copy(tile, final_icon)
     if art_icon:
         art_icon.unlink()
-    return final_icon, show_in_steam(appid, shortcut_name, final_icon)
+    show_in_steam(appid, final_icon)
+    return final_icon
 
 
 def load_image(icon):
@@ -375,13 +356,13 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
     name = (name or "").strip() or suggest_name(url)
     if not name or len(name) > 40 or re.search(r"[/\\|\"$`\x00-\x1f]", name) or name.startswith((".", "_", "-")):
         raise Problem("Pick a name of up to 40 characters, without / \\ | \" $ ` and not starting with . _ or -")
-    for tool in ("flatpak", "rsvg-convert", "steamos-add-to-steam"):
+    for tool in ("flatpak", "rsvg-convert"):
         if not shutil.which(tool):
             raise Problem(f"Missing program: {tool}")
     if subprocess.run(["flatpak", "info", CHROMIUM], capture_output=True).returncode != 0:
         raise Problem(f"Chromium isn't installed. Install it with:  flatpak install flathub {CHROMIUM}")
-    if not steam_running():
-        raise Problem("Steam isn't running. Start Steam, then try again.")
+    if not steam_reachable():
+        raise Problem(STEAM_UNREACHABLE)
     launcher, cls, slug = APPS / name, class_of(name), slug_of(name)
     existing = apps()
     if launcher.exists() or any(a["name"].lower() == name.lower() for a in existing):
@@ -410,13 +391,14 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
         f'{cls} {shlex.quote(url)} "$@"\n')
     launcher.chmod(0o755)
 
-    new = add_to_steam(launcher)
-    if not new:
+    try:
+        new = add_to_steam(launcher)
+    except Problem:
         launcher.unlink()
-        raise Problem("Steam didn't add the shortcut. Check that Steam is running (not just SteamVR) and try again.")
+        raise
     appid = new["appid"]
 
-    final_icon, live = make_art(name, new["name"], appid, parsed.netloc, image, color or site_color, say)
+    final_icon = make_art(name, new["name"], appid, parsed.netloc, image, color or site_color, say)
 
     DESKTOP_DIR.mkdir(parents=True, exist_ok=True)
     (DESKTOP_DIR / f"frame-webapp-{slug}.desktop").write_text(
@@ -431,9 +413,6 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
     if controller == "native":
         say("This app gets the controller directly (no navigation extension). Use the laser pointer for its menus if needed.")
     say("Open it from the Steam library (not the \"+\" menu) to get theater mode and controller support.")
-    if not live:
-        say("Its artwork and icon show up after the next Steam restart." +
-            ("" if HOOK.exists() else " (The icon needs the restart hook: run install.sh.)"))
     return appid
 
 
@@ -449,8 +428,8 @@ def cmd_art(name, icon=None, color=None, say=print):
     image, site_color = (None, None) if (icon and color) else site_info(app["url"])
     if icon:
         image = load_image(icon)
-    _, live = make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say)
-    say(f'New artwork for "{app["name"]}" is ' + ("in place." if live else "ready. It shows up after the next Steam restart."))
+    make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say)
+    say(f'New artwork for "{app["name"]}" is in place.')
 
 
 def cmd_list():
@@ -472,17 +451,25 @@ def cmd_remove(name, keep_data=False, say=print):
         raise Problem(f'No web app called "{name}". See:  frame-webapp list')
     cls, slug, launcher = app["class"] or class_of(app["name"]), slug_of(app["name"]), app["path"]
     profile = PROFILES / f"webapp-{cls}"
-    if subprocess.run(["pgrep", "-f", "--", f"--user-data-dir={profile}( |$)"], capture_output=True).returncode == 0:
-        raise Problem(f'"{app["name"]}" is running. Close it first.')
     s = shortcut_for(launcher)
-    removed_live = False
-    if s:
+    if s and not steam_reachable():
+        raise Problem(STEAM_UNREACHABLE)
+    pattern, was_open = f"--user-data-dir={profile}( |$)", False
+    if subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True).returncode == 0:
+        was_open = True   # the app is open: close it, then remove it
+        subprocess.run(["pkill", "-f", "--", pattern], capture_output=True)
+        for _ in range(40):
+            time.sleep(0.25)
+            if subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True).returncode != 0:
+                break
+        else:
+            raise Problem(f'"{app["name"]}" is open and didn\'t close. Close it, then try again.')
+    if s:   # take it out of the Steam library first; if that isn't possible, leave everything as it is
         cef = steam_live()
         try:
             cef.remove_shortcut(s["appid"])
-            removed_live = True
         except cef.SteamUnavailable:
-            pass
+            raise Problem(STEAM_UNREACHABLE) from None
     if s and STEAM_USERDATA.is_dir():
         for grid in STEAM_USERDATA.glob("*/config/grid"):
             for f in grid.glob(f"{s['appid']}*"):
@@ -493,14 +480,12 @@ def cmd_remove(name, keep_data=False, say=print):
     if not keep_data and profile.is_dir():
         shutil.rmtree(profile)
     subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
+    if was_open:
+        say(f'"{app["name"]}" was open, so it was closed.')
     say(f'Removed "{app["name"]}"' + (" (kept its browser data and sign-in)." if keep_data else " and its browser data."))
-    if removed_live:
+    if s:
         say("It's gone from your Steam library too.")
-    if s and not removed_live:
-        queue("shortcut-removals", f"{s['exe']}|")
-        say("Its Steam library entry disappears at the next Steam restart" +
-            (". " if HOOK.exists() else " once the restart hook is installed (run install.sh). ") +
-            "To remove it right now: select it in Steam, then Manage > Remove non-Steam game.")
+    return was_open
 
 
 def userctl(*args):
@@ -511,12 +496,12 @@ def userctl(*args):
 
 def is_set_up():
     link = Path.home() / ".local/bin/frame-webapp"
-    return HOOK.exists() and link.is_symlink() and os.path.realpath(link) == os.path.realpath(__file__)
+    return LOCK_UNIT.exists() and link.is_symlink() and os.path.realpath(link) == os.path.realpath(__file__)
 
 
 def cmd_setup(say=print):
-    """Create the command, the background units and the manager's Steam and menu entries. Safe to run again."""
-    for d in (APPS, ICONS, PENDING, ROOT / "logs"):
+    """Create the command, the background unit and the manager's Steam and menu entries. Safe to run again."""
+    for d in (APPS, ICONS, ROOT / "logs"):
         d.mkdir(exist_ok=True)
     bindir = Path.home() / ".local/bin"
     bindir.mkdir(parents=True, exist_ok=True)
@@ -524,15 +509,17 @@ def cmd_setup(say=print):
     if link.is_symlink() or link.exists():
         link.unlink()
     link.symlink_to(ROOT / "bin/frame-webapp")
-    units = Path.home() / ".config/systemd/user"
-    (units / "steam.service.d").mkdir(parents=True, exist_ok=True)
-    fill = lambda name: (ROOT / "systemd" / name).read_text().replace("@ROOT@", str(ROOT))
-    (units / "frame-webapps-chromium-lock.service").write_text(fill("frame-webapps-chromium-lock.service"))
-    HOOK.write_text(fill("steam-pending.conf"))
+    LOCK_UNIT.parent.mkdir(parents=True, exist_ok=True)
+    LOCK_UNIT.write_text((ROOT / "systemd" / LOCK_UNIT.name).read_text().replace("@ROOT@", str(ROOT)))
+    old_hook = LOCK_UNIT.parent / "steam.service.d/frame-webapps-pending.conf"   # earlier versions hooked into Steam's start
+    if old_hook.exists():
+        old_hook.unlink()
+        if not any(old_hook.parent.iterdir()):
+            old_hook.parent.rmdir()
     if userctl("daemon-reload"):
-        userctl("enable", "frame-webapps-chromium-lock.service")
+        userctl("enable", LOCK_UNIT.name)
     else:
-        say("Couldn't reach systemd; the background units take effect at the next login.")
+        say("Couldn't reach systemd; the background unit takes effect at the next login.")
     old = DESKTOP_DIR / "frame-webapps-add.desktop"   # the earlier two-dialog entry
     if old.exists():
         old.unlink()
@@ -545,24 +532,24 @@ def cmd_setup_manager(say=print):
     icon = ICONS / "web-apps-manager.png"
     s = shortcut_for(MANAGER_LAUNCHER)
     if not s:
-        if not steam_running():
-            say("Steam isn't running, so the Web Apps manager wasn't added to the Steam library. "
-                "Start Steam and run:  frame-webapp setup-manager")
-        else:
+        try:
             s = add_to_steam(MANAGER_LAUNCHER)
-            if not s:
-                say("Steam didn't add the Web Apps manager. Try later:  frame-webapp setup-manager")
+        except Problem:
+            say("Steam isn't reachable, so the Web Apps manager wasn't added to the Steam library. "
+                "Start Steam and run:  frame-webapp setup-manager")
     if s:
         r = subprocess.run([sys.executable, "-I", str(SCRIPTS / "steam-art.py"), s["name"], "--appid", str(s["appid"]),
                             "--glyph", "grid", "--subtitle", "ADD AND MANAGE", "--colors", "#4d8dff,#1f4fd1,#070b1c"],
                            capture_output=True, text=True)
         tile = next(iter(STEAM_USERDATA.glob(f"*/config/grid/{s['appid']}_icon.png")), None)
-        live = False
         if r.returncode == 0 and tile:
             ICONS.mkdir(exist_ok=True)
             shutil.copy(tile, icon)
-            live = show_in_steam(s["appid"], s["name"], icon)
-        say('"Web Apps" is in your Steam library.' + ("" if live else " Its artwork and icon show up after the next Steam restart."))
+            try:
+                show_in_steam(s["appid"], icon)
+            except Problem:
+                pass
+        say('"Web Apps" is in your Steam library.')
     (DESKTOP_DIR / "frame-webapps-manager.desktop").write_text(
         "[Desktop Entry]\nType=Application\nName=Web Apps\n"
         "Comment=Add websites to Steam as apps with controller support (frame-webapps)\n"
@@ -583,8 +570,7 @@ def manager_state():
     catalogue = json.loads((MANAGER_DIR / "catalogue.json").read_text())
     for c in catalogue:
         c["added"] = c["name"].lower() in names
-    return {"apps": mine, "catalogue": catalogue, "steamRunning": steam_running(),
-            "restartNeeded": PENDING.is_dir() and any(PENDING.iterdir())}
+    return {"apps": mine, "catalogue": catalogue, "steamRunning": steam_reachable()}
 
 
 def cmd_manager(no_browser=False, port=0):
@@ -656,8 +642,9 @@ def cmd_manager(no_browser=False, port=0):
                     return self.reply(200, {"ok": True, "message": f"Added {added}. Open it from the Steam library."})
                 if path == "/api/remove":
                     with busy:
-                        cmd_remove(str(body.get("name", "")), say=lines.append)
-                    return self.reply(200, {"ok": True, "message": f'Removed {body.get("name")}.'})
+                        was_open = cmd_remove(str(body.get("name", "")), say=lines.append)
+                    return self.reply(200, {"ok": True, "message": f'Removed {body.get("name")}.' +
+                                            (" It was open, so it was closed first." if was_open else "")})
             except Problem as e:   # drop command-line hints: this is the app, not the terminal
                 return self.reply(200, {"ok": False, "error": re.sub(r"\s+(Remove it first|See):\s+frame-webapp.*$", "", str(e))})
             except Exception as e:

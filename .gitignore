@@ -2,8 +2,5 @@
 apps/
 icons/
 logs/
-pending/
 *.log
 __pycache__/
-*.bak
-*.bak-*

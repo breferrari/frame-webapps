@@ -21,9 +21,6 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 700; }
   button.danger.armed { background: var(--danger); border-color: var(--danger); color: #1b0606; font-weight: 700; }
 
-  #banner { display: none; margin: 1.2rem 0 0; padding: .9rem 1.1rem; border-radius: .8rem; background: #1d2a44; border: 2px solid #33507f; }
-  #banner.show { display: block; }
-
   .apps { display: grid; gap: .6rem; }
   .app { display: flex; align-items: center; gap: 1rem; padding: .7rem 1rem; background: var(--panel); border: 2px solid var(--line); border-radius: .8rem; }
   .app img, .app .noicon { width: 3rem; height: 3rem; border-radius: .6rem; flex: none; object-fit: cover; }
@@ -51,8 +48,6 @@
 <body>
   <h1>Web Apps</h1>
   <p class="lead">Add websites to your Steam library as apps that work with the controller.</p>
-
-  <div id="banner">Some changes couldn't be applied to the running Steam. They will show the next time Steam starts.</div>
 
   <h2>Your apps</h2>
   <div id="apps" class="apps"></div>
@@ -146,8 +141,6 @@
   }
 
   function render(state) {
-    $('banner').classList.toggle('show', !!state.restartNeeded);
-
     const apps = $('apps');
     apps.replaceChildren();
     if (!state.apps.length) {

@@ -42,7 +42,7 @@ controller:
 
 - **Add a site** from the grid of known sites with one press, or type just an address under **Another site**
   (the name is taken from the site).
-- **Remove** an app with two presses. It leaves the Steam library at once.
+- **Remove** an app with two presses. It leaves the Steam library at once. If the app is open, it is closed first.
 - Artwork and icons appear right away. Nothing ever restarts.
 
 ### The command
@@ -59,7 +59,7 @@ controller:
 Then **open the app from the Steam library**. Two things to know:
 
 - **No restart needed.** The app, its artwork and its icon show up in the library right away, and removing an app takes
-  it out of the library at once. Only if Steam's local interface can't be reached do these wait for the next Steam start.
+  it out of the library at once. Steam has to be running.
 - **Don't launch it from the multitasking "+" menu.** That menu starts desktop apps, which get the laser pointer only.
 
 ### Controls
@@ -119,12 +119,11 @@ Everything lives in your home folder:
 
 | Path | What |
 |---|---|
-| `~/.local/share/frame-webapps/` | The tool, your apps (`apps/`), icons, logs and queued changes (`pending/`) |
+| `~/.local/share/frame-webapps/` | The tool, your apps (`apps/`), icons and logs |
 | `~/.local/bin/frame-webapp` | The command (a link) |
 | `~/.local/share/applications/frame-webapps-manager.desktop` | The "Web Apps" menu entry |
 | A "Web Apps" entry in your Steam library | The manager. It serves its page on this device only (`127.0.0.1`) while it is open |
 | `~/.config/systemd/user/frame-webapps-chromium-lock.service` | At session start, clears a stale Chromium profile lock left by a restart |
-| `~/.config/systemd/user/steam.service.d/frame-webapps-pending.conf` | A fallback: just before Steam starts, applies shortcut edits (icons, removals) that couldn't be made while it ran. Does nothing when the queue is empty, which is the normal case |
 
 Each app also gets a Chromium profile in `~/.var/app/org.chromium.Chromium/config/webapp-<Name>WebApp/` and a
 `frame-webapp-<name>.desktop` entry (for its window icon).
@@ -136,8 +135,7 @@ Each app also gets a Chromium profile in `~/.var/app/org.chromium.Chromium/confi
 systemctl --user disable frame-webapps-chromium-lock.service
 rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
        ~/.local/share/applications/frame-webapps-manager.desktop \
-       ~/.config/systemd/user/frame-webapps-chromium-lock.service \
-       ~/.config/systemd/user/steam.service.d/frame-webapps-pending.conf
+       ~/.config/systemd/user/frame-webapps-chromium-lock.service
 ```
 
 ## What's inside
@@ -150,10 +148,9 @@ rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
 | `webapps/extensions/frame-gamepad/` | The controller extension (MV3 content script, no permissions, no network) |
 | `webapps/launch-via-steam.sh` | Starts a shortcut *through* Steam from a `.desktop` file |
 | `scripts/steamcef.py` | Talks to the running Steam through its local interface: add and remove shortcuts, set artwork and icons, no restart |
-| `scripts/steam-shortcuts.py` | Lists shortcuts; sets icons, renames, removes (edits the binary `shortcuts.vdf`, refuses while Steam runs) |
+| `scripts/steam-shortcuts.py` | Lists the non-Steam shortcuts (reads the binary `shortcuts.vdf`) |
 | `scripts/steam-art.py` | Renders library artwork (cover, wide, hero, logo, icon) with `rsvg-convert` |
-| `scripts/apply-controller-layout.py` | Assigns a layout file or Steam template to shortcuts (for repairs: new shortcuts don't need it) |
-| `scripts/apply-pending-steam.sh`, `systemd/` | The fallback queue applied before Steam starts, and the lock cleanup |
+| `scripts/chromium-stale-lock-cleanup.sh`, `systemd/` | Clears a stale Chromium profile lock at session start |
 
 Not affiliated with Valve or any of the sites you add. Use at your own risk.
 
