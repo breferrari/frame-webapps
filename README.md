@@ -1,14 +1,25 @@
 # frame-webapps
 
-Turn any website into a **Steam Frame app with controller support**: one command, and it's in your Steam library
-with artwork, its own sign-in, and working sticks and buttons.
+![Made for Steam Frame](https://img.shields.io/badge/made%20for-Steam%20Frame-1a9fff)
+![License: MIT](https://img.shields.io/badge/license-MIT-green)
+
+**Turn any website into an app on your Steam Frame, with a controller that works.**
 
 ```bash
 frame-webapp add "Netflix" https://www.netflix.com
 ```
 
-Built and tested on a Steam Frame running SteamOS 0.5.10, SteamVR 2.19.4 and Flathub Chromium 158 (November 2026).
-Sites tried so far: Crunchyroll (DRM video).
+One command puts the site in your Steam library. Then you open it like any game:
+
+🎮 **The controller works.** Sticks scroll, the D-pad moves between links, A clicks, X plays and pauses.  
+🎬 **Streaming video plays.** Apps run in Chromium with Widevine DRM.  
+🖼️ **It looks like it belongs.** Artwork and icon are made from the site's own icon and colour.  
+🔐 **You stay signed in.** Each app has its own browser profile, separate from your normal browser.  
+🧹 **It's easy to undo.** No password, nothing system-wide, and one command removes an app.  
+
+Made for streaming sites, but you can add any site. Built and tested on a Steam Frame running SteamOS 0.5.10,
+SteamVR 2.19.4 and Flathub Chromium 158 (November 2026). Tried in the headset so far: Crunchyroll.
+If a site misbehaves, please open an issue with its address.
 
 ## Install
 
@@ -46,7 +57,16 @@ Then **open the app from the Steam library**. Two things to know:
 | LT / RT | Previous/next-episode or skip-intro button if the site has one, else −30 s / +30 s |
 | Laser pointer | Still works: tap **grip** to switch between laser and gamepad mode |
 
-## Why this exists
+## Limits
+
+- **Site quirks.** Scrolling, focus and video controls are generic and act on the page directly. Sites with unusual
+  players or menus may need tweaks.
+- **Video quality** is whatever the site gives Linux browsers (often 720p for DRM services).
+- **Icons.** Some sites block automated requests, so the tool can't fetch their icon and draws a plain tile.
+  Pass your own with `--icon`.
+- Made for the Steam Frame. Untested on other SteamOS devices.
+
+## How it works
 
 Open a streaming site as a Chromium "web app" from the Steam library and the Frame's controllers barely work: no stick
 scrolling, no buttons. Steam can't link a **Flatpak** window to its shortcut, so whatever a Steam Input layout sends
@@ -64,15 +84,6 @@ profile, so apps run side by side and stay signed in separately from your normal
 
 [docs/web-apps.md](docs/web-apps.md) has the details: how it works, troubleshooting, and the approaches that did
 *not* work (and why).
-
-## Limits
-
-- **Site quirks.** Scrolling, focus and video controls are generic and act on the page directly. Sites with unusual
-  players or menus may need tweaks: please open an issue with the site's address.
-- **Video quality** is whatever the site gives Linux browsers (often 720p for DRM services).
-- **Icons.** Some sites block automated requests, so the tool can't fetch their icon and draws a plain tile.
-  Pass your own with `--icon`.
-- Made for the Steam Frame. Untested on other SteamOS devices.
 
 ## What install.sh changes
 
