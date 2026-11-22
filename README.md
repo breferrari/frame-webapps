@@ -127,7 +127,9 @@ frame-webapps **reads the controller inside the page** instead:
 3. A small extension, [`frame-gamepad`](webapps/extensions/frame-gamepad), polls the Gamepad API and scrolls, moves
    focus, clicks and controls the `<video>`.
 
-It runs in Flathub Chromium, so **Widevine DRM** keeps working and DRM sites play. Each app gets its own browser
+It runs in Flathub Chromium, so **Widevine DRM** keeps working and DRM sites play. Chromium only downloads Widevine
+after a profile's first start, so the tool puts it into each new app's profile beforehand; on a Frame that has no
+copy yet, the first app start takes about a minute longer, once. Each app gets its own browser
 profile, so apps run side by side and stay signed in separately from your normal Chromium.
 
 [docs/web-apps.md](docs/web-apps.md) has the details: how it works, troubleshooting, and the approaches that did
@@ -171,6 +173,7 @@ rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
 | `scripts/steam-shortcuts.py` | Lists the non-Steam shortcuts (reads the binary `shortcuts.vdf`) |
 | `scripts/steam-art.py` | Renders library artwork (cover, wide, hero, logo, icon) with `rsvg-convert` |
 | `launcher/web-apps.c`, `scripts/make-release.sh`, `frameport.json` | The release archive: a tiny compiled starter for the manager, the build script, and the manifest FramePort reads |
+| `scripts/widevine.sh` | Gives each new app's profile the Widevine DRM component before its first start |
 | `scripts/chromium-stale-lock-cleanup.sh`, `systemd/` | Clears a stale Chromium profile lock at session start |
 
 Not affiliated with Valve or any of the sites you add. Use at your own risk.

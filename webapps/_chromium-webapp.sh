@@ -24,9 +24,13 @@ ROOT="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"   # the frame-webapps 
 EXT_ROOT="$ROOT/webapps/extensions"
 mkdir -p "$PROFILE" "$ROOT/logs"
 
-# Widevine (DRM, needed by Crunchyroll/Netflix…): seed from the main profile so playback works on first launch.
-if [ ! -d "$PROFILE/WidevineCdm" ] && [ -d "$CFG/chromium/WidevineCdm" ]; then
-  cp -a "$CFG/chromium/WidevineCdm" "$PROFILE/"
+# Widevine (DRM, needed by Crunchyroll/Netflix…): a new profile has none on its first start, so DRM video would fail
+# once. scripts/widevine.sh copies it in, fetching it first if this Frame has no copy yet (about a minute, once).
+# The manager needs no DRM: it starts right away and fetches in the background, ready for the first app.
+if [ "$CLASS" = FrameWebAppsManager ]; then
+  (bash "$ROOT/scripts/widevine.sh" --fetch >/dev/null 2>&1 &)
+else
+  bash "$ROOT/scripts/widevine.sh" "$PROFILE" >/dev/null 2>&1
 fi
 
 if ! pgrep -f -- "--user-data-dir=$PROFILE( |$)" >/dev/null; then
