@@ -32,6 +32,7 @@ curl -fsSL https://raw.githubusercontent.com/breferrari/frame-webapps/main/insta
 ```
 
 No password, nothing system-wide, nothing restarts. See [what it changes](#what-installsh-changes).
+To update later, run the same line again.
 
 ### From a PC, without Konsole (experimental)
 
@@ -143,6 +144,7 @@ Everything lives in your home folder:
 |---|---|
 | `~/.local/share/frame-webapps/` | The tool, your apps (`apps/`), icons and logs |
 | `~/.local/bin/frame-webapp` | The command (a link) |
+| One line in `~/.bashrc` | Adds `~/.local/bin` to the command search path, if it isn't there already |
 | `~/.local/share/applications/frame-webapps-manager.desktop` | The "Web Apps" menu entry |
 | A "Web Apps" entry in your Steam library | The manager. It serves its page on this device only (`127.0.0.1`) while it is open |
 | `~/.config/systemd/user/frame-webapps-chromium-lock.service` | At session start, clears a stale Chromium profile lock left by a restart |
@@ -159,6 +161,8 @@ rm -rf ~/.local/share/frame-webapps ~/.local/bin/frame-webapp \
        ~/.local/share/applications/frame-webapps-manager.desktop \
        ~/.config/systemd/user/frame-webapps-chromium-lock.service
 ```
+
+You can also delete the line marked "added by frame-webapps" from `~/.bashrc`.
 
 ## What's inside
 

@@ -40,4 +40,4 @@ echo "== setting up"
 echo
 echo "Done. Open \"Web Apps\" from the Steam library or the desktop menu, or use the command:"
 echo "    frame-webapp add \"Netflix\" https://www.netflix.com"
-case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "(If 'frame-webapp' isn't found, use $HOME/.local/bin/frame-webapp)";; esac
+case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) echo "(The command works in new Konsole windows. In this one, use $HOME/.local/bin/frame-webapp)";; esac

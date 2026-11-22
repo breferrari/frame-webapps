@@ -20,7 +20,7 @@ import urllib.parse, urllib.request
 from html import unescape
 from pathlib import Path
 
-VERSION = "0.1.2"
+VERSION = "0.1.3"
 ROOT = Path(os.path.realpath(__file__)).parent.parent
 # "External" install: the files were put here by another tool (such as FramePort), which owns the manager's Steam entry
 # and may replace this folder when it updates. launcher/web-apps.c sets the variable; setup leaves the marker file.
@@ -533,6 +533,16 @@ def cmd_setup(say=print):
     if link.is_symlink() or link.exists():
         link.unlink()
     link.symlink_to(ROOT / "bin/frame-webapp")
+    # SteamOS doesn't search ~/.local/bin for commands: add it for new terminals, once.
+    bashrc = Path.home() / ".bashrc"
+    try:
+        text = bashrc.read_text() if bashrc.exists() else ""
+        if ".local/bin" not in text:
+            with bashrc.open("a") as f:
+                f.write(("" if not text or text.endswith("\n") else "\n")
+                        + '\n# added by frame-webapps: makes the frame-webapp command available\nexport PATH="$HOME/.local/bin:$PATH"\n')
+    except OSError:
+        pass
     LOCK_UNIT.parent.mkdir(parents=True, exist_ok=True)
     LOCK_UNIT.write_text((ROOT / "systemd" / LOCK_UNIT.name).read_text().replace("@ROOT@", str(ROOT)))
     old_hook = LOCK_UNIT.parent / "steam.service.d/frame-webapps-pending.conf"   # earlier versions hooked into Steam's start
@@ -741,7 +751,10 @@ def main():
                 raise Problem("This copy wasn't installed with git (for example, it came from FramePort). "
                               "Update it the same way you installed it.")
             subprocess.run(["git", "-C", str(ROOT), "config", "core.fileMode", "false"])   # a chmod must never block an update
-            sys.exit(subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"]).returncode)
+            code = subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"]).returncode
+            if code == 0:   # let the new version redo its setup (safe to run again)
+                code = subprocess.run([sys.executable, str(ROOT / "bin/frame-webapp"), "setup"]).returncode
+            sys.exit(code)
         else:
             p.print_help()
     except Problem as e:
