@@ -130,7 +130,8 @@ frame-webapps **reads the controller inside the page** instead:
 
 It runs in Flathub Chromium, so **Widevine DRM** keeps working and DRM sites play. Chromium only downloads Widevine
 after a profile's first start, so the tool puts it into each new app's profile beforehand; on a Frame that has no
-copy yet, the first app start takes about a minute longer, once. Each app gets its own browser
+copy yet, the installer fetches one in the background (about a minute), so it is normally there before you open
+your first app. Each app gets its own browser
 profile, so apps run side by side and stay signed in separately from your normal Chromium.
 
 [docs/web-apps.md](docs/web-apps.md) has the details: how it works, troubleshooting, and the approaches that did
