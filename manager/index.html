@@ -29,6 +29,9 @@
   .app .name { font-weight: 700; }
   .app .url, .empty { color: var(--dim); font-size: .85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .empty { padding: .4rem 0; white-space: normal; font-size: 1rem; }
+  .help { padding: .9rem 1.2rem; background: var(--panel); border: 2px solid var(--accent); border-radius: .8rem; }
+  .help ol { margin: .5rem 0 .9rem; padding-left: 1.4rem; line-height: 1.6; }
+  .help .row { display: flex; gap: .7rem; }
 
   .catalogue { display: grid; grid-template-columns: repeat(auto-fill, minmax(11.5rem, 1fr)); gap: .7rem; }
   .tile { height: 5.4rem; border: 2px solid transparent; border-radius: .8rem; padding: .6rem .8rem; text-align: left;
@@ -149,14 +152,26 @@
     for (const app of state.apps) {
       const remove = el('button', { className: 'danger', textContent: 'Remove' });
       confirmButton(remove, 'Press again to remove', () => run(`Removing ${app.name}...`, '/api/remove', { name: app.name }));
+      // Extensions: explain first, in plain words, then open the store.
       const extensions = el('button', { textContent: 'Extensions' });
-      extensions.addEventListener('click', () => run(`Opening the Chrome Web Store for ${app.name}...`, '/api/extensions', { name: app.name }));
+      const open = el('button', { className: 'primary', textContent: 'Open the store' });
+      const cancel = el('button', { textContent: 'Not now' });
+      const help = el('div', { className: 'help', hidden: true },
+        el('div', { textContent: `Extensions add extras to ${app.name}, such as an ad blocker. They come from the Chrome Web Store.` }),
+        el('ol', null,
+          el('li', { textContent: 'Press "Open the store". A browser window opens.' }),
+          el('li', { textContent: 'Find what you want and choose "Add to Chrome". Use the pointer for this (tap grip).' }),
+          el('li', { textContent: `Close that window. The next time you open ${app.name}, the extension is there.` })),
+        el('div', { className: 'row' }, open, cancel));
+      extensions.addEventListener('click', () => { help.hidden = !help.hidden; if (!help.hidden) open.focus(); });
+      cancel.addEventListener('click', () => { help.hidden = true; extensions.focus(); });
+      open.addEventListener('click', () => run(`Opening the Chrome Web Store for ${app.name}...`, '/api/extensions', { name: app.name }));
       const icon = app.icon ? el('img', { src: app.icon, alt: '' }) : el('div', { className: 'noicon' });
       apps.append(el('div', { className: 'app' }, icon,
         el('div', { className: 'meta' },
           el('div', { className: 'name', textContent: app.name }),
           el('div', { className: 'url', textContent: app.inSteam ? app.url : app.url + ' (not in Steam)' })),
-        extensions, remove));
+        extensions, remove), help);
     }
 
     const catalogue = $('catalogue');

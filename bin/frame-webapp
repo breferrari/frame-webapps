@@ -718,7 +718,7 @@ def cmd_manager(no_browser=False, port=0):
                 if path == "/api/extensions":
                     with busy:
                         was_open = cmd_extensions(str(body.get("name", "")), say=lines.append)
-                    return self.reply(200, {"ok": True, "message": "The Chrome Web Store is opening in a new window. Add what you want, then close that window." +
+                    return self.reply(200, {"ok": True, "message": "The store is opening in a new window. Add what you want, then close that window." +
                                             (f' {body.get("name")} was open, so it was closed first.' if was_open else "")})
                 if path == "/api/remove":
                     with busy:
