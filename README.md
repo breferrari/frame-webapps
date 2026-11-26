@@ -62,6 +62,7 @@ controller:
 - **Add a site** from the grid of known sites with one press, or type just an address under **Another site**
   (the name is taken from the site).
 - **Remove** an app with two presses. It leaves the Steam library at once. If the app is open, it is closed first.
+- **TV mode** (on apps whose site has a TV interface, such as YouTube) switches between that and the regular site.
 - **Extensions** adds extras such as an ad blocker to one app. Press it, then "Open the store": a browser window opens
   on the Chrome Web Store. Find what you want and choose "Add to Chrome" with the laser pointer (tap grip). When you
   are done, close the tab (the small X on the tab at the top) to come back. The next time you open the app, the
@@ -74,7 +75,7 @@ controller:
 |---|---|
 | Add an app | `frame-webapp add "Name" https://site.example` (the name is optional) |
 | Game streaming site | add `--controller native`: the site gets the controller directly (see below) |
-| TV interface | add `--controller tv` with the TV address, e.g. `https://www.youtube.com/tv` (see below) |
+| TV interface | add `--tv https://www.youtube.com/tv`; switch later with `frame-webapp tv "YouTube" off` or `on` (see below) |
 | List | `frame-webapp list` |
 | New artwork | `frame-webapp art "Name" [--icon file.png] [--color "#e50914"]` |
 | Extensions | `frame-webapp extensions "Name"` opens the Chrome Web Store for that app, for an ad blocker and the like |
@@ -112,10 +113,12 @@ controller directly, and the navigation above is off for that app.
 
 ![A game streamed through Xbox Cloud Gaming on the theater screen, with the Frame controllers below it](docs/game-streaming.png)
 
-**TV interfaces.** Some sites have an interface made for TVs and remote controls, which suits a controller better
-than their desktop site. YouTube's is `https://www.youtube.com/tv`: the manager's grid has it as "YouTube TV", next to
-the regular YouTube. With `--controller tv` the app presents itself as a TV and the controller acts as the remote: D-pad or
-stick to move, A = OK, B = back, X = play/pause, LB/RB = rewind/forward.
+**TV mode.** Some sites have an interface made for TVs and remote controls, which suits a controller better than
+their desktop site. YouTube is the main one, and adding it from the manager's grid turns TV mode on. The app then
+presents itself as a TV and the controller acts as the remote: D-pad or stick to move, A = OK, B = back,
+X = play/pause, LB/RB = rewind/forward. The **TV mode** button on the app in the manager switches between the TV
+interface and the regular site; the Steam entry, artwork and sign-in stay the same. For a site that only has a TV
+address, use `--controller tv`.
 
 ## Limits
 

@@ -1,7 +1,6 @@
 [
   {"name": "Netflix",       "url": "https://www.netflix.com",       "color": "#e50914"},
-  {"name": "YouTube",       "url": "https://www.youtube.com",       "color": "#ff0033"},
-  {"name": "YouTube TV",    "url": "https://www.youtube.com/tv",    "color": "#ff0033", "controller": "tv"},
+  {"name": "YouTube",       "url": "https://www.youtube.com",       "color": "#ff0033", "tv": "https://www.youtube.com/tv"},
   {"name": "Twitch",        "url": "https://www.twitch.tv",         "color": "#9146ff"},
   {"name": "Crunchyroll",   "url": "https://www.crunchyroll.com",   "color": "#f47521"},
   {"name": "Disney+",       "url": "https://www.disneyplus.com",    "color": "#113ccf"},

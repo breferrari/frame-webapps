@@ -167,24 +167,27 @@
       extensions.addEventListener('click', () => { help.hidden = !help.hidden; if (!help.hidden) open.focus(); });
       cancel.addEventListener('click', () => { help.hidden = true; extensions.focus(); });
       open.addEventListener('click', () => run(`Opening the Chrome Web Store for ${app.name}...`, '/api/extensions', { name: app.name, width: screen.width, height: screen.height }));
+      // TV mode: only for apps whose site has a TV interface. The button shows the state and switches it.
+      const tv = app.tv === null ? '' : el('button', { textContent: app.tv ? 'TV mode: on' : 'TV mode: off' });
+      if (tv) tv.addEventListener('click', () => run(`Switching ${app.name}...`, '/api/tv', { name: app.name, on: !app.tv }));
       const icon = app.icon ? el('img', { src: app.icon, alt: '' }) : el('div', { className: 'noicon' });
       apps.append(el('div', { className: 'app' }, icon,
         el('div', { className: 'meta' },
           el('div', { className: 'name', textContent: app.name }),
-          el('div', { className: 'url', textContent: app.inSteam ? app.url : app.url + ' (not in Steam)' })),
-        extensions, remove), help);
+          el('div', { className: 'url', textContent: (app.tv ? 'TV interface' : app.url) + (app.inSteam ? '' : ' (not in Steam)') })),
+        tv, extensions, remove), help);
     }
 
     const catalogue = $('catalogue');
     catalogue.replaceChildren();
     for (const site of state.catalogue) {
-      const note = site.added ? 'Added' : (site.controller === 'native' ? 'Game streaming' : site.controller === 'tv' ? 'TV interface' : '');
+      const note = site.added ? 'Added' : (site.controller === 'native' ? 'Game streaming' : site.tv ? 'TV mode' : '');
       const tile = el('button', { className: 'tile', disabled: !!site.added },
         el('span', { textContent: site.name }), el('small', { textContent: note }));
       tile.style.background = site.color;
       tile.style.color = textOn(site.color);
       tile.addEventListener('click', () => run(`Adding ${site.name}...`, '/api/add',
-        { name: site.name, url: site.url, color: site.color, controller: site.controller }));
+        { name: site.name, url: site.url, color: site.color, controller: site.controller, tv: site.tv }));
       catalogue.append(tile);
     }
     if (!state.steamRunning) toast('Steam is not running. Start Steam to add apps.', true);
