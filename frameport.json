@@ -1,8 +1,8 @@
 {
   "schema": "framedrop.install/v1",
   "name": "Web Apps",
-  "version": "0.2.1",
-  "files": [{ "url": "https://github.com/breferrari/frame-webapps/releases/download/v0.2.1/frame-webapps-v0.2.1-steamos-arm64.tar.gz", "sha256": "554faa437b471034820b5087b8fb40d068198ddd3f637c33a694a58bb54b957c" }],
+  "version": "0.2.2",
+  "files": [{ "url": "https://github.com/breferrari/frame-webapps/releases/download/v0.2.2/frame-webapps-v0.2.2-steamos-arm64.tar.gz", "sha256": "2b93620577221d1ad9a358108e269062f0bac81f6bae97f2e4e055e1f3b95b19" }],
   "frameport": {
     "description": "Add websites to your Steam library as apps that work with the controller.",
     "icon": "https://raw.githubusercontent.com/breferrari/frame-webapps/main/manager/icon.png"
