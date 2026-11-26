@@ -685,6 +685,38 @@ def cmd_setup_manager(say=print):
     subprocess.run(["update-desktop-database", str(DESKTOP_DIR)], capture_output=True)
 
 
+def version_tuple(text):
+    return tuple(int(n) for n in re.findall(r"\d+", text)[:3])
+
+
+def newer_version():
+    """The version number on GitHub if it is newer than this copy, else None. Only for installs made with git."""
+    if not (ROOT / ".git").exists():
+        return None
+    try:
+        git = ["git", "-C", str(ROOT)]
+        if subprocess.run([*git, "fetch", "-q", "origin"], capture_output=True, timeout=30).returncode != 0:
+            return None
+        remote = subprocess.run([*git, "show", "origin/HEAD:bin/frame-webapp"], capture_output=True, text=True, timeout=10).stdout
+        m = re.search(r'^VERSION = "([\d.]+)"', remote, re.M)
+        return m.group(1) if m and version_tuple(m.group(1)) > version_tuple(VERSION) else None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def cmd_update(quiet=False):
+    """Pull the newest version and let it redo its setup. Returns True when it worked."""
+    if not (ROOT / ".git").exists():
+        raise Problem("This copy wasn't installed with git (for example, it came from FramePort). "
+                      "Update it the same way you installed it.")
+    out = {"capture_output": True} if quiet else {}
+    subprocess.run(["git", "-C", str(ROOT), "config", "core.fileMode", "false"])   # a chmod must never block an update
+    if subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"], **out).returncode != 0:
+        return False
+    # let the new version redo its setup (safe to run again)
+    return subprocess.run([sys.executable, str(ROOT / "bin/frame-webapp"), "setup"], **out).returncode == 0
+
+
 def manager_state():
     in_steam = shortcuts()
     mine = []
@@ -719,6 +751,15 @@ def cmd_manager(no_browser=False, port=0):
         except Exception:
             pass
     token, busy = secrets.token_urlsafe(24), threading.Lock()
+    update = {"version": None, "restart": False}   # a newer version on GitHub, looked up in the background
+
+    def look_for_update():
+        update["version"] = newer_version()
+    threading.Thread(target=look_for_update, daemon=True).start()
+
+    def close_window():
+        time.sleep(2.5)   # let the page show the message first
+        subprocess.run(["pkill", "-f", "--", f"--user-data-dir={profile}( |$)"], capture_output=True)
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -749,7 +790,7 @@ def cmd_manager(no_browser=False, port=0):
             if path.startswith("/icons/") and re.fullmatch(r"[a-z0-9-]+\.png", path[7:]) and (ICONS / path[7:]).is_file():
                 return self.reply(200, (ICONS / path[7:]).read_bytes(), "image/png")
             if path == "/api/state" and self.authorised():
-                return self.reply(200, manager_state())
+                return self.reply(200, {**manager_state(), "version": VERSION, "update": update["version"]})
             self.reply(404, {"error": "not found"})
 
         def do_POST(self):
@@ -768,6 +809,13 @@ def cmd_manager(no_browser=False, port=0):
                                 tv_url=str(body["tv"]) if body.get("tv") else None)
                     added = next((l.split('"')[1] for l in lines if l.startswith('Added "')), "the site")
                     return self.reply(200, {"ok": True, "message": f"Added {added}. Open it from the Steam library."})
+                if path == "/api/update":
+                    with busy:
+                        if not cmd_update(quiet=True):
+                            return self.reply(200, {"ok": False, "error": "The update did not work. Check the internet connection and try again."})
+                    update["version"], update["restart"] = None, True   # reopen with the new version (see below)
+                    threading.Thread(target=close_window, daemon=True).start()
+                    return self.reply(200, {"ok": True, "message": "Updated. Web Apps will reopen in a moment."})
                 if path == "/api/tv":
                     with busy:
                         was_open = cmd_tv(str(body.get("name", "")), bool(body.get("on")), say=lines.append)
@@ -809,6 +857,9 @@ def cmd_manager(no_browser=False, port=0):
     subprocess.run(["/bin/bash", str(ROOT / "webapps/_chromium-webapp.sh"), MANAGER_CLASS, url],
                    env={**os.environ, "WEBAPP_EXTENSIONS": "frame-gamepad"})
     server.shutdown()
+    if update["restart"]:   # just updated: start again as the new version, in the same process so Steam keeps the app running
+        server.server_close()
+        os.execv(sys.executable, [sys.executable, str(ROOT / "bin/frame-webapp"), "manager"])
 
 
 def main():
@@ -867,14 +918,7 @@ def main():
         elif o.cmd == "run":
             cmd_run(o.cls, o.url, "native" if o.native else o.controller)
         elif o.cmd == "update":
-            if not (ROOT / ".git").exists():
-                raise Problem("This copy wasn't installed with git (for example, it came from FramePort). "
-                              "Update it the same way you installed it.")
-            subprocess.run(["git", "-C", str(ROOT), "config", "core.fileMode", "false"])   # a chmod must never block an update
-            code = subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"]).returncode
-            if code == 0:   # let the new version redo its setup (safe to run again)
-                code = subprocess.run([sys.executable, str(ROOT / "bin/frame-webapp"), "setup"]).returncode
-            sys.exit(code)
+            sys.exit(0 if cmd_update() else 1)
         else:
             p.print_help()
     except Problem as e:
