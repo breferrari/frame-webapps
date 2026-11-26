@@ -3,7 +3,7 @@
 ![Made for Steam Frame](https://img.shields.io/badge/made%20for-Steam%20Frame-1a9fff)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green)
 
-**Turn any website into an app on your Steam Frame, with a controller that works.**
+**Turn any website into an app on your Steam Frame, with full controller support.**
 
 ![The Steam library in the headset, showing Web Apps next to Twitch, Kick, Crunchyroll and YouTube tiles](docs/steam-library.png)
 
