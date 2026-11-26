@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """frame-webapp: turn any website into a Steam Frame app with controller support.
 
-  frame-webapp add ["Name"] https://example.com [--icon FILE] [--color "#rrggbb"] [--controller native]
+  frame-webapp add ["Name"] https://example.com [--icon FILE] [--color "#rrggbb"] [--controller native|tv]
   frame-webapp list
   frame-webapp art "Name" [--icon FILE] [--color "#rrggbb"]     regenerate the artwork and icon
   frame-webapp remove "Name" [--keep-data]
@@ -37,6 +37,10 @@ STEAM_UNREACHABLE = "Steam isn't reachable. Make sure Steam is running, then try
 MANAGER_DIR = ROOT / "manager"
 MANAGER_LAUNCHER = MANAGER_DIR / "Web Apps"      # the filename is the name shown in Steam
 MANAGER_CLASS = "FrameWebAppsManager"
+# Controller modes: what the app's launcher sets for webapps/_chromium-webapp.sh.
+MODES = {"extension": "WEBAPP_EXTENSIONS=frame-gamepad ",       # our extension scrolls, moves focus and drives the video
+         "native": "",                                          # the site reads the controller itself (game streaming)
+         "tv": "WEBAPP_EXTENSIONS=frame-gamepad-tv WEBAPP_TV=1 "}   # the site's TV interface, driven with remote-control keys
 UA = "Mozilla/5.0 (X11; Linux aarch64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 
 
@@ -358,8 +362,8 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
     parsed = urllib.parse.urlparse(url)
     if parsed.scheme not in ("http", "https") or "." not in parsed.netloc or re.search(r"[\s\"'`$\\<>]", url):
         raise Problem(f"That doesn't look like a web address: {url}")
-    if controller not in ("extension", "native"):
-        raise Problem("--controller must be extension or native")
+    if controller not in MODES:
+        raise Problem("--controller must be extension, native or tv")
     name = (name or "").strip() or suggest_name(url)
     if not name or len(name) > 40 or re.search(r"[/\\|\"$`\x00-\x1f]", name) or name.startswith((".", "_", "-")):
         raise Problem("Pick a name of up to 40 characters, without / \\ | \" $ ` and not starting with . _ or -")
@@ -393,9 +397,9 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
         f"# url: {url}\n"
         f"# class: {cls}\n"
         f"# controller: {controller}\n"
-        + (f'exec "$HOME/.local/bin/frame-webapp" run {cls} {shlex.quote(url)}' + (" --native" if controller == "native" else "") + "\n"
+        + (f'exec "$HOME/.local/bin/frame-webapp" run {cls} {shlex.quote(url)} --controller {controller}\n'
            if EXTERNAL else   # the tool's folder may move: go through the command, which setup keeps pointing at it
-           ("" if controller == "native" else "WEBAPP_EXTENSIONS=frame-gamepad ") +
+           MODES[controller] +
            'exec "$(dirname "$(readlink -f "$0")")/../webapps/_chromium-webapp.sh" ' + f'{cls} {shlex.quote(url)} "$@"\n'))
     launcher.chmod(0o755)
 
@@ -420,6 +424,8 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension")
     say(f'Added "{name}" to your Steam library.')
     if controller == "native":
         say("This app gets the controller directly (no navigation extension). Use the laser pointer for its menus if needed.")
+    if controller == "tv":
+        say("This app opens the site's TV interface: D-pad or stick to move, A = OK, B = back, X = play/pause, LB/RB = rewind/forward.")
     say("Open it from the Steam library (not the \"+\" menu) to get theater mode and controller support.")
     return appid
 
@@ -534,11 +540,12 @@ def is_set_up():
     return LOCK_UNIT.exists() and link.is_symlink() and os.path.realpath(link) == os.path.realpath(__file__)
 
 
-def cmd_run(cls, url, native=False):
+def cmd_run(cls, url, controller="extension"):
     """Start a web app (used by app launchers of an external install)."""
     env = {**os.environ}
-    if not native:
-        env["WEBAPP_EXTENSIONS"] = "frame-gamepad"
+    for setting in MODES[controller].split():
+        key, value = setting.split("=", 1)
+        env[key] = value
     os.execve("/bin/bash", ["bash", str(ROOT / "webapps/_chromium-webapp.sh"), cls, url], env)
 
 
@@ -705,7 +712,7 @@ def cmd_manager(no_browser=False, port=0):
                 if path == "/api/add":
                     with busy:
                         cmd_add(str(body.get("name") or ""), str(body.get("url", "")), color=str(body["color"]) if body.get("color") else None,
-                                say=lines.append, controller="native" if body.get("controller") == "native" else "extension")
+                                say=lines.append, controller=body.get("controller") if body.get("controller") in MODES else "extension")
                     added = next((l.split('"')[1] for l in lines if l.startswith('Added "')), "the site")
                     return self.reply(200, {"ok": True, "message": f"Added {added}. Open it from the Steam library."})
                 if path == "/api/extensions":
@@ -746,8 +753,8 @@ def main():
     sub = p.add_subparsers(dest="cmd")
     a = sub.add_parser("add", help="add a website to the Steam library")
     a.add_argument("name_and_url", nargs="+", metavar="[NAME] URL", help='the address, optionally preceded by a name')
-    a.add_argument("--controller", choices=["extension", "native"], default="extension",
-                   help="native: the site reads the controller itself (game streaming)")
+    a.add_argument("--controller", choices=list(MODES), default="extension",
+                   help="native: the site reads the controller itself (game streaming); tv: the site's TV interface (youtube.com/tv)")
     a.add_argument("--icon", help="use this image (PNG, JPEG, SVG, ICO) instead of the site's icon")
     a.add_argument("--color", help='artwork colour, e.g. "#e50914" (default: the site\'s theme colour)')
     sub.add_parser("list", help="list your web apps")
@@ -764,7 +771,8 @@ def main():
     sub.add_parser("setup-manager", help="add the Web Apps manager to the Steam library")
     sub.add_parser("update", help="update frame-webapps (git pull)")
     x = sub.add_parser("run")   # internal: start a web app; used by app launchers
-    x.add_argument("cls"); x.add_argument("url"); x.add_argument("--native", action="store_true")
+    x.add_argument("cls"); x.add_argument("url"); x.add_argument("--native", action="store_true")   # --native: launchers written by 0.1.x
+    x.add_argument("--controller", choices=list(MODES), default="extension")
     o = p.parse_args()
     try:
         if o.cmd == "add":
@@ -787,7 +795,7 @@ def main():
         elif o.cmd == "setup-manager":
             cmd_setup_manager()
         elif o.cmd == "run":
-            cmd_run(o.cls, o.url, o.native)
+            cmd_run(o.cls, o.url, "native" if o.native else o.controller)
         elif o.cmd == "update":
             if not (ROOT / ".git").exists():
                 raise Problem("This copy wasn't installed with git (for example, it came from FramePort). "

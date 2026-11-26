@@ -1,0 +1,13 @@
+{
+  "manifest_version": 3,
+  "name": "Frame Gamepad (TV mode)",
+  "version": "1.0.0",
+  "description": "Steam Frame controllers for TV interfaces such as youtube.com/tv: turns the controller into remote-control keys (arrows, OK, back, play/pause). Local, no permissions, no network.",
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["frame-gamepad-tv.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

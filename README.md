@@ -72,6 +72,7 @@ controller:
 |---|---|
 | Add an app | `frame-webapp add "Name" https://site.example` (the name is optional) |
 | Game streaming site | add `--controller native`: the site gets the controller directly (see below) |
+| TV interface | add `--controller tv` with the TV address, e.g. `https://www.youtube.com/tv` (see below) |
 | List | `frame-webapp list` |
 | New artwork | `frame-webapp art "Name" [--icon file.png] [--color "#e50914"]` |
 | Extensions | `frame-webapp extensions "Name"` opens the Chrome Web Store for that app, for an ad blocker and the like |
@@ -108,6 +109,11 @@ The artwork is generated from the site's own icon and colour. To change it:
 controller directly, and the navigation above is off for that app.
 
 ![A game streamed through Xbox Cloud Gaming on the theater screen, with the Frame controllers below it](docs/game-streaming.png)
+
+**TV interfaces.** Some sites have an interface made for TVs and remote controls, which suits a controller better
+than their desktop site. YouTube's is `https://www.youtube.com/tv`, and it is what the manager's grid adds for
+YouTube. With `--controller tv` the app presents itself as a TV and the controller acts as the remote: D-pad or
+stick to move, A = OK, B = back, X = play/pause, LB/RB = rewind/forward.
 
 ## Limits
 
@@ -175,6 +181,7 @@ You can also delete the line marked "added by frame-webapps" from `~/.bashrc`.
 | `bin/frame-webapp` | The command: add, list, art, remove, manager, setup, update |
 | `manager/` | The Web Apps manager: its page, the catalogue of known sites, and its Steam launcher |
 | `webapps/_chromium-webapp.sh` | Launcher: Chromium app mode, one profile per app, Widevine, stale-lock fix, udev access, extension, logs |
+| `webapps/extensions/frame-gamepad-tv/` | The TV-mode extension: turns the controller into remote-control keys |
 | `webapps/extensions/frame-gamepad/` | The controller extension (MV3 content script, no permissions, no network) |
 | `webapps/launch-via-steam.sh` | Starts a shortcut *through* Steam from a `.desktop` file |
 | `scripts/steamcef.py` | Talks to the running Steam through its local interface: add and remove shortcuts, set artwork and icons, no restart |

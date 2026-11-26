@@ -162,7 +162,7 @@
     const catalogue = $('catalogue');
     catalogue.replaceChildren();
     for (const site of state.catalogue) {
-      const note = site.added ? 'Added' : (site.controller === 'native' ? 'Game streaming' : '');
+      const note = site.added ? 'Added' : (site.controller === 'native' ? 'Game streaming' : site.controller === 'tv' ? 'TV interface' : '');
       const tile = el('button', { className: 'tile', disabled: !!site.added },
         el('span', { textContent: site.name }), el('small', { textContent: note }));
       tile.style.background = site.color;

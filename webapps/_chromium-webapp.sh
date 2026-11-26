@@ -45,6 +45,8 @@ if [ -n "${WEBAPP_EXTENSIONS:-}" ]; then
   for e in "${exts[@]}"; do [ -f "$EXT_ROOT/$e/manifest.json" ] && dirs="${dirs:+$dirs,}$EXT_ROOT/$e"; done
   [ -n "$dirs" ] && EXT_ARGS=(--load-extension="$dirs")
 fi
+# TV mode: present the browser as a TV, so sites such as youtube.com/tv serve their TV interface.
+[ "${WEBAPP_TV:-}" = 1 ] && EXT_ARGS+=("--user-agent=Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) 85.0.4183.93/6.0 TV Safari/537.36")
 echo "$(date '+%F %T') $CLASS ${URL%%\?*} extensions=${WEBAPP_EXTENSIONS:-none}" >> "$ROOT/logs/launch.log"   # without any query (it may hold a token)
 
 # Chromium's own log (media/DRM/GPU errors, and the extension's "[frame-gamepad]" lines), last run only.
