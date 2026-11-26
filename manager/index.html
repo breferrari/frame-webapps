@@ -149,12 +149,14 @@
     for (const app of state.apps) {
       const remove = el('button', { className: 'danger', textContent: 'Remove' });
       confirmButton(remove, 'Press again to remove', () => run(`Removing ${app.name}...`, '/api/remove', { name: app.name }));
+      const extensions = el('button', { textContent: 'Extensions' });
+      extensions.addEventListener('click', () => run(`Opening the Chrome Web Store for ${app.name}...`, '/api/extensions', { name: app.name }));
       const icon = app.icon ? el('img', { src: app.icon, alt: '' }) : el('div', { className: 'noicon' });
       apps.append(el('div', { className: 'app' }, icon,
         el('div', { className: 'meta' },
           el('div', { className: 'name', textContent: app.name }),
           el('div', { className: 'url', textContent: app.inSteam ? app.url : app.url + ' (not in Steam)' })),
-        remove));
+        extensions, remove));
     }
 
     const catalogue = $('catalogue');

@@ -62,6 +62,8 @@ controller:
 - **Add a site** from the grid of known sites with one press, or type just an address under **Another site**
   (the name is taken from the site).
 - **Remove** an app with two presses. It leaves the Steam library at once. If the app is open, it is closed first.
+- **Extensions** opens the Chrome Web Store in that app's own browser profile, for an ad blocker and the like. What you
+  add stays with that app. Use the laser pointer there (tap grip), then close the window.
 - Artwork and icons appear right away. Nothing ever restarts.
 
 ### The command
@@ -72,6 +74,7 @@ controller:
 | Game streaming site | add `--controller native`: the site gets the controller directly (see below) |
 | List | `frame-webapp list` |
 | New artwork | `frame-webapp art "Name" [--icon file.png] [--color "#e50914"]` |
+| Extensions | `frame-webapp extensions "Name"` opens the Chrome Web Store for that app, for an ad blocker and the like |
 | Remove | `frame-webapp remove "Name"` (add `--keep-data` to keep the sign-in) |
 | Update the tool | `frame-webapp update` |
 
