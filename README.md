@@ -111,8 +111,8 @@ controller directly, and the navigation above is off for that app.
 ![A game streamed through Xbox Cloud Gaming on the theater screen, with the Frame controllers below it](docs/game-streaming.png)
 
 **TV interfaces.** Some sites have an interface made for TVs and remote controls, which suits a controller better
-than their desktop site. YouTube's is `https://www.youtube.com/tv`, and it is what the manager's grid adds for
-YouTube. With `--controller tv` the app presents itself as a TV and the controller acts as the remote: D-pad or
+than their desktop site. YouTube's is `https://www.youtube.com/tv`: the manager's grid has it as "YouTube TV", next to
+the regular YouTube. With `--controller tv` the app presents itself as a TV and the controller acts as the remote: D-pad or
 stick to move, A = OK, B = back, X = play/pause, LB/RB = rewind/forward.
 
 ## Limits
