@@ -57,7 +57,7 @@ you, please [open an issue](https://github.com/breferrari/frame-webapps/issues).
 After installing, **Web Apps** is in your Steam library (and in the desktop menu). Open it in the headset and use the
 controller:
 
-![The Web Apps manager in the headset: your apps with Remove buttons, and a grid of known sites with one of them highlighted](docs/manager.png)
+![The Web Apps manager in the headset: your apps with TV mode, Extensions and Remove buttons, and a grid of known sites below](docs/web-apps-manager.png)
 
 - **Add a site** from the grid of known sites with one press, or type just an address under **Another site**
   (the name is taken from the site).
