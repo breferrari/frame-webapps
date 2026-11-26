@@ -161,11 +161,12 @@
         el('ol', null,
           el('li', { textContent: 'Press "Open the store". A browser window opens.' }),
           el('li', { textContent: 'Find what you want and choose "Add to Chrome". Use the pointer for this (tap grip).' }),
-          el('li', { textContent: `Close that window. The next time you open ${app.name}, the extension is there.` })),
+          el('li', { textContent: 'When you are done, close the tab: point at the small X on the tab at the top of the window. That brings you back here.' }),
+          el('li', { textContent: `The next time you open ${app.name}, the extension is there.` })),
         el('div', { className: 'row' }, open, cancel));
       extensions.addEventListener('click', () => { help.hidden = !help.hidden; if (!help.hidden) open.focus(); });
       cancel.addEventListener('click', () => { help.hidden = true; extensions.focus(); });
-      open.addEventListener('click', () => run(`Opening the Chrome Web Store for ${app.name}...`, '/api/extensions', { name: app.name }));
+      open.addEventListener('click', () => run(`Opening the Chrome Web Store for ${app.name}...`, '/api/extensions', { name: app.name, width: screen.width, height: screen.height }));
       const icon = app.icon ? el('img', { src: app.icon, alt: '' }) : el('div', { className: 'noicon' });
       apps.append(el('div', { className: 'app' }, icon,
         el('div', { className: 'meta' },

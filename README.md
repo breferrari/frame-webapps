@@ -63,8 +63,9 @@ controller:
   (the name is taken from the site).
 - **Remove** an app with two presses. It leaves the Steam library at once. If the app is open, it is closed first.
 - **Extensions** adds extras such as an ad blocker to one app. Press it, then "Open the store": a browser window opens
-  on the Chrome Web Store. Find what you want, choose "Add to Chrome" with the laser pointer (tap grip), and close
-  that window. The next time you open the app, the extension is there. It stays with that app only.
+  on the Chrome Web Store. Find what you want and choose "Add to Chrome" with the laser pointer (tap grip). When you
+  are done, close the tab (the small X on the tab at the top) to come back. The next time you open the app, the
+  extension is there. It stays with that app only.
 - Artwork and icons appear right away. Nothing ever restarts.
 
 ### The command
