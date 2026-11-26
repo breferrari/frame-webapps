@@ -384,17 +384,33 @@ def write_launcher(launcher, name, cls, url, controller, site_url=None, tv_url=N
     launcher.chmod(0o755)
 
 
+def tv_addresses(app, catalogue=None):
+    """(regular address, TV address) of an app whose site has a TV interface, else None. Apps added before TV mode
+    existed have no addresses in their launcher: those are matched with the catalogue by their address."""
+    if app.get("tv-url") and app.get("site-url"):
+        return app["site-url"], app["tv-url"]
+    same = lambda a, b: a.rstrip("/").lower() == b.rstrip("/").lower()
+    if catalogue is None:
+        catalogue = json.loads((MANAGER_DIR / "catalogue.json").read_text())
+    for c in catalogue:
+        if c.get("tv") and (same(app["url"], c["url"]) or same(app["url"], c["tv"])):
+            return c["url"], c["tv"]
+    return None
+
+
 def cmd_tv(name, on, say=print):
     """Switch an app between its site's TV interface and the regular site. Same Steam entry, artwork and sign-in."""
     app = find_app(name)
-    if not app.get("tv-url"):
+    both = tv_addresses(app)
+    if not both:
         raise Problem(f'"{app["name"]}" has no TV interface that I know of.')
+    site_url, tv_url = both
     cls = app["class"] or class_of(app["name"])
     was_open = close_app(app, PROFILES / f"webapp-{cls}")
     if on:
-        write_launcher(app["path"], app["name"], cls, app["tv-url"], "tv", app["site-url"], app["tv-url"])
+        write_launcher(app["path"], app["name"], cls, tv_url, "tv", site_url, tv_url)
     else:
-        write_launcher(app["path"], app["name"], cls, app["site-url"], "extension", app["site-url"], app["tv-url"])
+        write_launcher(app["path"], app["name"], cls, site_url, "extension", site_url, tv_url)
     if was_open:
         say(f'"{app["name"]}" was open, so it was closed.')
     say(f'"{app["name"]}" now opens ' + ("the TV interface." if on else "the regular site."))
@@ -407,6 +423,9 @@ def cmd_add(name, url, icon=None, color=None, say=print, controller="extension",
     parsed = urllib.parse.urlparse(url)
     if controller not in MODES:
         raise Problem("--controller must be extension, native or tv")
+    if tv_url and controller == "native":
+        raise Problem("--tv can't be combined with --controller native: an app with a TV interface switches between "
+                      "that and the regular site with our navigation.")
     name = (name or "").strip() or suggest_name(url)
     if not name or len(name) > 40 or re.search(r"[/\\|\"$`\x00-\x1f]", name) or name.startswith((".", "_", "-")):
         raise Problem("Pick a name of up to 40 characters, without / \\ | \" $ ` and not starting with . _ or -")
@@ -478,10 +497,11 @@ def cmd_art(name, icon=None, color=None, say=print):
         raise Problem(f'"{app["name"]}" isn\'t in the Steam library.')
     if color and not re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", color):
         raise Problem("--color must look like #rrggbb")
-    image, site_color = (None, None) if (icon and color) else site_info(app["url"])
+    site = app.get("site-url") or app["url"]   # in TV mode "url" is the TV interface; the icon comes from the regular site
+    image, site_color = (None, None) if (icon and color) else site_info(site)
     if icon:
         image = load_image(icon)
-    make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(app["url"]).netloc, image, color or site_color, say)
+    make_art(app["name"], s["name"], s["appid"], urllib.parse.urlparse(site).netloc, image, color or site_color, say)
     say(f'New artwork for "{app["name"]}" is in place.')
 
 
@@ -505,16 +525,22 @@ def find_app(name):
     return app
 
 
+STORE_CLASS = "FrameWebAppsStore"   # window class of the Chrome Web Store window that "extensions" opens
+
+
 def close_app(app, profile):
-    """Close the app's browser if it is open. Returns whether it was."""
+    """Close whatever browser runs on the app's profile. Returns whether the app itself was open (a leftover
+    store window, opened by "extensions", doesn't count)."""
     pattern = f"--user-data-dir={profile}( |$)"
-    if subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True).returncode != 0:
+    found = subprocess.run(["pgrep", "-af", "--", pattern], capture_output=True, text=True)
+    if found.returncode != 0:
         return False
+    was_app = f"--class={STORE_CLASS}" not in found.stdout
     subprocess.run(["pkill", "-f", "--", pattern], capture_output=True)
     for _ in range(40):
         time.sleep(0.25)
         if subprocess.run(["pgrep", "-f", "--", pattern], capture_output=True).returncode != 0:
-            return True
+            return was_app
     raise Problem(f'"{app["name"]}" is open and didn\'t close. Close it, then try again.')
 
 
@@ -532,14 +558,15 @@ def cmd_extensions(name, say=print, size=None):
     """Open the app's own browser profile as a normal window on the Chrome Web Store, to add or manage extensions."""
     app = find_app(name)
     profile = PROFILES / f"webapp-{app['class'] or class_of(app['name'])}"
-    was_open = close_app(app, profile)
+    was_open = close_app(app, profile)   # also closes a store window that is still open from last time
     profile.mkdir(parents=True, exist_ok=True)
     for f in profile.glob("Singleton*"):
         f.unlink(missing_ok=True)
     size = size or screen_size()   # fill the screen: nothing maximises the window for us in the headset
     fill = [f"--window-size={size[0]},{size[1]}", "--window-position=0,0"] if size else []
     subprocess.Popen(["flatpak", "run", CHROMIUM, "--ozone-platform=x11", f"--user-data-dir={profile}", "--no-first-run",
-                      "--no-default-browser-check", "--start-maximized", *fill, "--new-window", "https://chromewebstore.google.com/"],
+                      "--no-default-browser-check", f"--class={STORE_CLASS}", "--start-maximized", *fill, "--new-window",
+                      "https://chromewebstore.google.com/"],
                      start_new_session=True, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if was_open:
         say(f'"{app["name"]}" was open, so it was closed.')
@@ -705,28 +732,38 @@ def newer_version():
 
 
 def cmd_update(quiet=False):
-    """Pull the newest version and let it redo its setup. Returns True when it worked."""
+    """Pull the newest version and let it redo its setup. Returns "" when it worked, else what went wrong.
+    quiet (the manager): nothing is printed and each step has a time limit, so a stalled connection can't hang it."""
     if not (ROOT / ".git").exists():
         raise Problem("This copy wasn't installed with git (for example, it came from FramePort). "
                       "Update it the same way you installed it.")
-    out = {"capture_output": True} if quiet else {}
+    how = {"capture_output": True, "text": True, "timeout": 120} if quiet else {}
     subprocess.run(["git", "-C", str(ROOT), "config", "core.fileMode", "false"])   # a chmod must never block an update
-    if subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"], **out).returncode != 0:
-        return False
-    # let the new version redo its setup (safe to run again)
-    return subprocess.run([sys.executable, str(ROOT / "bin/frame-webapp"), "setup"], **out).returncode == 0
+    try:
+        pull = subprocess.run(["git", "-C", str(ROOT), "pull", "--ff-only"], **how)
+        if pull.returncode != 0:
+            detail = ((pull.stderr or "").strip().splitlines() or [""])[-1] if quiet else ""
+            if not quiet or re.search(r"resolve host|unable to access|timed out|Connection", detail):
+                return "The download did not work. Check the internet connection and try again."
+            return f"The download did not work: {detail[:200]}"
+        # let the new version redo its setup (safe to run again)
+        if subprocess.run([sys.executable, str(ROOT / "bin/frame-webapp"), "setup"], **how).returncode != 0:
+            return "The new version was downloaded, but its setup did not finish. Close and reopen Web Apps."
+    except subprocess.TimeoutExpired:
+        return "The update took too long and was stopped. Check the internet connection and try again."
+    return ""
 
 
 def manager_state():
     in_steam = shortcuts()
     mine = []
+    catalogue = json.loads((MANAGER_DIR / "catalogue.json").read_text())
     for a in apps():
         icon = ICONS / f"{slug_of(a['name'])}.png"
         mine.append({"name": a["name"], "url": a["url"], "inSteam": shortcut_for(a["path"], in_steam) is not None,
-                     "tv": (a["controller"] == "tv") if a.get("tv-url") else None,   # None: no TV interface to switch to
+                     "tv": (a["controller"] == "tv") if tv_addresses(a, catalogue) else None,   # None: no TV interface to switch to
                      "icon": f"/icons/{icon.name}" if icon.exists() else None})
     names = {a["name"].lower() for a in mine}
-    catalogue = json.loads((MANAGER_DIR / "catalogue.json").read_text())
     for c in catalogue:
         c["added"] = c["name"].lower() in names
     return {"apps": mine, "catalogue": catalogue, "steamRunning": steam_reachable()}
@@ -759,7 +796,18 @@ def cmd_manager(no_browser=False, port=0):
 
     def close_window():
         time.sleep(2.5)   # let the page show the message first
-        subprocess.run(["pkill", "-f", "--", f"--user-data-dir={profile}( |$)"], capture_output=True)
+        if no_browser:
+            server.shutdown()
+        else:
+            subprocess.run(["pkill", "-f", "--", f"--user-data-dir={profile}( |$)"], capture_output=True)
+
+    def finish():
+        """The window is gone. Let a request that is still working finish, then stop, or start again after an update."""
+        busy.acquire(timeout=300)
+        server.server_close()
+        if update["restart"]:   # same process, so Steam keeps seeing the app as running; same arguments as this run
+            os.execv(sys.executable, [sys.executable, str(ROOT / "bin/frame-webapp"), "manager",
+                                      *(["--no-browser"] if no_browser else []), *(["--port", str(port)] if port else [])])
 
     class Handler(http.server.BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -801,6 +849,8 @@ def cmd_manager(no_browser=False, port=0):
             except ValueError:
                 return self.reply(400, {"error": "bad request"})
             path, lines = urllib.parse.urlparse(self.path).path, []
+            if update["restart"]:   # updated: the old version does nothing more, the new one is about to open
+                return self.reply(200, {"ok": False, "error": "Web Apps is restarting after the update. One moment."})
             try:
                 if path == "/api/add":
                     with busy:
@@ -811,11 +861,12 @@ def cmd_manager(no_browser=False, port=0):
                     return self.reply(200, {"ok": True, "message": f"Added {added}. Open it from the Steam library."})
                 if path == "/api/update":
                     with busy:
-                        if not cmd_update(quiet=True):
-                            return self.reply(200, {"ok": False, "error": "The update did not work. Check the internet connection and try again."})
-                    update["version"], update["restart"] = None, True   # reopen with the new version (see below)
+                        problem = cmd_update(quiet=True)
+                        if problem:
+                            return self.reply(200, {"ok": False, "error": problem})
+                        update["version"], update["restart"] = None, True   # reopen as the new version (see finish)
                     threading.Thread(target=close_window, daemon=True).start()
-                    return self.reply(200, {"ok": True, "message": "Updated. Web Apps will reopen in a moment."})
+                    return self.reply(200, {"ok": True, "restarting": True, "message": "Updated. Web Apps will reopen in a moment."})
                 if path == "/api/tv":
                     with busy:
                         was_open = cmd_tv(str(body.get("name", "")), bool(body.get("on")), say=lines.append)
@@ -852,14 +903,12 @@ def cmd_manager(no_browser=False, port=0):
             server.serve_forever()
         except KeyboardInterrupt:
             pass
-        return
+        return finish()
     threading.Thread(target=server.serve_forever, daemon=True).start()
     subprocess.run(["/bin/bash", str(ROOT / "webapps/_chromium-webapp.sh"), MANAGER_CLASS, url],
                    env={**os.environ, "WEBAPP_EXTENSIONS": "frame-gamepad"})
     server.shutdown()
-    if update["restart"]:   # just updated: start again as the new version, in the same process so Steam keeps the app running
-        server.server_close()
-        os.execv(sys.executable, [sys.executable, str(ROOT / "bin/frame-webapp"), "manager"])
+    finish()
 
 
 def main():
@@ -918,7 +967,8 @@ def main():
         elif o.cmd == "run":
             cmd_run(o.cls, o.url, "native" if o.native else o.controller)
         elif o.cmd == "update":
-            sys.exit(0 if cmd_update() else 1)
+            problem = cmd_update()
+            sys.exit(problem or 0)
         else:
             p.print_help()
     except Problem as e:

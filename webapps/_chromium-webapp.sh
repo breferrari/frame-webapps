@@ -33,6 +33,13 @@ else
   bash "$ROOT/scripts/widevine.sh" "$PROFILE" >/dev/null 2>&1
 fi
 
+# A Chrome Web Store window from "frame-webapp extensions" may still be open on this profile. Two Chromium instances
+# can't share a profile (see above), so close it before the app starts.
+if pgrep -af -- "--user-data-dir=$PROFILE( |$)" | grep -q -- "--class=FrameWebAppsStore"; then
+  pkill -f -- "--user-data-dir=$PROFILE( |$)"
+  for _ in $(seq 1 20); do pgrep -f -- "--user-data-dir=$PROFILE( |$)" >/dev/null || break; sleep 0.25; done
+fi
+
 if ! pgrep -f -- "--user-data-dir=$PROFILE( |$)" >/dev/null; then
   rm -f "$PROFILE/SingletonLock" "$PROFILE/SingletonSocket" "$PROFILE/SingletonCookie"
 fi

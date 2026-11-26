@@ -140,6 +140,7 @@
       const r = await api(path, body);
       ok = !!r.ok;
       toast(r.ok ? r.message : r.error || 'That did not work.', !r.ok);
+      if (r.restarting) return ok;   // stay busy: the window closes and Web Apps reopens as the new version
     } catch (e) {
       toast('Could not reach the manager. Close and reopen Web Apps.', true);
     }

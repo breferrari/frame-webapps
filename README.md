@@ -183,7 +183,7 @@ You can also delete the line marked "added by frame-webapps" from `~/.bashrc`.
 
 | Path | What |
 |---|---|
-| `bin/frame-webapp` | The command: add, list, art, remove, manager, setup, update |
+| `bin/frame-webapp` | The command: add, list, art, tv, extensions, remove, manager, setup, update |
 | `manager/` | The Web Apps manager: its page, the catalogue of known sites, and its Steam launcher |
 | `webapps/_chromium-webapp.sh` | Launcher: Chromium app mode, one profile per app, Widevine, stale-lock fix, udev access, extension, logs |
 | `webapps/extensions/frame-gamepad-tv/` | The TV-mode extension: turns the controller into remote-control keys |

@@ -26,11 +26,12 @@ Steam Input (a new shortcut gets Steam's generic gamepad layout)
 
 | Piece | Where | Why it's needed |
 |---|---|---|
-| App launcher | `apps/<Name>` | Written by `frame-webapp add`. The **filename is the Steam name**. Sets `WEBAPP_EXTENSIONS=frame-gamepad` and calls the shared launcher with `<WindowClass> <URL>` |
+| App launcher | `apps/<Name>` | Written by `frame-webapp add`. The **filename is the Steam name**. Sets `WEBAPP_EXTENSIONS=frame-gamepad` (or, in TV mode, `WEBAPP_EXTENSIONS=frame-gamepad-tv WEBAPP_TV=1`) and calls the shared launcher with `<WindowClass> <URL>` |
 | Shared launcher | `webapps/_chromium-webapp.sh` | Per-app profile, Widevine seeding, stale-lock cleanup, udev access, loads extensions, writes logs |
 | Per-app profile | `~/.var/app/org.chromium.Chromium/config/webapp-<Class>/` | Flatpak Chromium instances can't hand over to each other (private `/tmp`), so a shared profile gives "Profile error occurred". Separate profiles run side by side. Sign in once per app |
 | Widevine (DRM) | copied from `…/config/chromium/WidevineCdm` on first run | Netflix, Crunchyroll etc. need it. Chromium re-registers the copy automatically |
 | `--filesystem=/run/udev:ro` | launcher | Chromium's Linux gamepad backend needs the udev database (`ID_INPUT_JOYSTICK`), which the Flatpak sandbox lacks. Without it the Gamepad API sees no controller |
+| frame-gamepad-tv extension | `webapps/extensions/frame-gamepad-tv/` | TV mode only: turns the controller into remote-control keys (arrows, Enter, Escape, media keys) for TV interfaces such as `youtube.com/tv`. Its log lines start with `[frame-gamepad-tv]` |
 | frame-gamepad extension | `webapps/extensions/frame-gamepad/` | Reads the controller in the page and acts on the DOM and `<video>` directly. MV3 content script, no permissions, no network |
 | Gamepad layout in Steam | Steam's default for a new shortcut (`controller_generic_gamepad_joystick.vdf`) | Steam only feeds the virtual Xbox pad when the app has a **gamepad** layout. Key/mouse layouts never reach a Flatpak window (see below). If you changed an app's layout, switch it back to a Gamepad template |
 | Stale-lock cleanup | launcher + `frame-webapps-chromium-lock.service` | A session restart kills Chromium and leaves a lock (`frame-2`, PID 2 in the sandbox) that blocks the next start |
@@ -103,7 +104,17 @@ with the D-pad and A like any other web app. It calls the same code as `add` and
   `Origin`, so other pages in a browser and other devices on the network can't use it.
 - On first launch it runs `frame-webapp setup` if the command or the background unit is missing, so any way of
   getting the files onto the Frame ends in the same state.
-- `manager/catalogue.json` lists the known sites (name, address, colour, and `"controller": "native"` where needed).
+- `manager/catalogue.json` lists the known sites (name, address, colour, `"controller": "native"` where needed, and
+  `"tv": "<address>"` for a site with a TV interface).
+- **TV mode.** An app whose site has a TV interface keeps both addresses in its launcher (`# site-url:`, `# tv-url:`).
+  `frame-webapp tv "Name" on|off` and the manager's TV mode button rewrite the launcher for one or the other; the
+  Steam entry, artwork and profile stay. In TV mode the shared launcher adds a TV user agent (`WEBAPP_TV=1`).
+- **Extensions.** `frame-webapp extensions "Name"` opens the app's profile as a normal Chromium window (window class
+  `FrameWebAppsStore`) on the Chrome Web Store. The app's launcher closes such a window if it is still open, because
+  two Chromium instances can't share a profile.
+- **Updates.** On opening, the manager runs `git fetch` in the background and compares `VERSION` in
+  `bin/frame-webapp` with the one on GitHub. "Update now" runs `git pull --ff-only` and `frame-webapp setup`, then
+  the manager starts again in the same process as the new version. Installs without git don't check.
 
 ## Troubleshooting
 

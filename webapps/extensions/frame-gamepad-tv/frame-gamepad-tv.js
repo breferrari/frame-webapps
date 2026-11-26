@@ -35,14 +35,17 @@
 
   let announced = false;
   function poll(now) {
-    const pad = [...navigator.getGamepads()].find(p => p && p.connected);
-    if (pad) {
-      if (!announced) { announced = true; log('controller ready:', pad.id); }
+    // Every connected pad counts, as in frame-gamepad.js: the Frame's controller isn't always the first one listed.
+    const pads = [...navigator.getGamepads()].filter(p => p && p.connected);
+    if (pads.length) {
+      if (!announced) { announced = true; log('controller ready:', pads.map(p => p.id).join(' + ')); }
       const down = new Set();
-      pad.buttons.forEach((b, i) => { if (b.pressed && KEYS[i]) down.add(i); });
-      for (const [x, y] of [[pad.axes[0], pad.axes[1]], [pad.axes[2], pad.axes[3]]]) {
-        if (Math.abs(x || 0) > TILT || Math.abs(y || 0) > TILT) {
-          down.add(Math.abs(x) > Math.abs(y) ? (x > 0 ? STICK.right : STICK.left) : (y > 0 ? STICK.down : STICK.up));
+      for (const pad of pads) {
+        pad.buttons.forEach((b, i) => { if (b.pressed && KEYS[i]) down.add(i); });
+        for (const [x, y] of [[pad.axes[0], pad.axes[1]], [pad.axes[2], pad.axes[3]]]) {
+          if (Math.abs(x || 0) > TILT || Math.abs(y || 0) > TILT) {
+            down.add(Math.abs(x) > Math.abs(y) ? (x > 0 ? STICK.right : STICK.left) : (y > 0 ? STICK.down : STICK.up));
+          }
         }
       }
       for (const b of down) {
