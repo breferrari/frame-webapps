@@ -33,7 +33,7 @@
             border: 2px solid var(--accent); border-radius: .8rem; }
   #update[hidden] { display: none; }
   #update span { flex: 1; }
-  #version { color: var(--dim); font-size: .9rem; font-weight: 400; margin-left: .7rem; letter-spacing: 0; }
+  #version { color: var(--dim); font-size: .8rem; margin-top: 2rem; }
   .help { padding: .9rem 1.2rem; background: var(--panel); border: 2px solid var(--accent); border-radius: .8rem; }
   .help ol { margin: .5rem 0 .9rem; padding-left: 1.4rem; line-height: 1.6; }
   .help .row { display: flex; gap: .7rem; }
@@ -55,7 +55,7 @@
 </head>
 <body>
   <div id="update" hidden><span></span><button class="primary">Update now</button></div>
-  <h1>Web Apps<span id="version"></span></h1>
+  <h1>Web Apps</h1>
   <p class="lead">Add websites to your Steam library as apps that work with the controller.</p>
 
   <h2>Your apps</h2>
@@ -71,6 +71,7 @@
     <button class="primary" type="submit">Add</button>
   </form>
   <p class="hint">Leave the name empty to use the site's own name.</p>
+  <div id="version"></div>
 
   <div id="toast" role="status"></div>
 
@@ -153,7 +154,7 @@
   function showVersion(state) {
     $('update').hidden = !state.update;
     $('update').querySelector('span').textContent = state.update ? `Version ${state.update} of Web Apps is available. You have ${state.version}.` : '';
-    $('version').textContent = state.version ? `version ${state.version}` : '';
+    $('version').textContent = state.version ? `Web Apps ${state.version}` : '';
   }
 
   function render(state) {
