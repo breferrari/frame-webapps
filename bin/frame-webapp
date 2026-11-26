@@ -22,7 +22,7 @@ import urllib.parse, urllib.request
 from html import unescape
 from pathlib import Path
 
-VERSION = "0.2.1"
+VERSION = "0.2.2"
 ROOT = Path(os.path.realpath(__file__)).parent.parent
 # "External" install: the files were put here by another tool (such as FramePort), which owns the manager's Steam entry
 # and may replace this folder when it updates. launcher/web-apps.c sets the variable; setup leaves the marker file.
